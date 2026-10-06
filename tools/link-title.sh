@@ -140,8 +140,22 @@ app="$root/dist/$title_id"
 rm -rf -- "$app"
 mkdir -p "$app/sce_sys" "$app/sce_module"
 
-"$tool" self --sign --in "$work/eboot.elf" --out "$app/eboot.bin" --magic 0x1D3D154F
-"$tool" self --inspect --file "$app/eboot.bin" > /dev/null
+# eboot.bin is the converted module ELF, not a signed fake-SELF.
+#
+# That is what the loaders in use actually take: on the console this was developed
+# against, every working title - PS5SX2, and the others in /data/homebrew and on
+# USB - has an ELF magic (7f 45 4c 46) at the head of its eboot.bin, not a SELF's.
+# PS5_VulkanTemplate signs because its own runner wants that; a title launched by
+# the homebrew loader does not.
+#
+# PSP5_SIGN_EBOOT=1 produces the signed one instead, for a loader that wants it.
+if [[ -n ${PSP5_SIGN_EBOOT:-} ]]; then
+	"$tool" self --sign --in "$work/eboot.elf" --out "$app/eboot.bin" --magic 0x1D3D154F
+	"$tool" self --inspect --file "$app/eboot.bin" > /dev/null
+	echo "==> eboot.bin is a signed fake-SELF (PSP5_SIGN_EBOOT)"
+else
+	cp -- "$work/eboot.elf" "$app/eboot.bin"
+fi
 
 cp "$param" "$app/sce_sys/param.json"
 for asset in icon0.png pic0.dds pic1.dds snd0.at9; do
