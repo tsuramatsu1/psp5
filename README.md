@@ -64,6 +64,18 @@ PSP5_FFMPEG_PREFIX=$PWD/build/ffmpeg ./tools/build.sh
 ./tools/link-title.sh                             # -> dist/PPSA99131/
 ```
 
+Building under WSL from a working copy on the Windows filesystem? Build on the
+Linux side — object files on `/mnt/c` are far too slow — and set
+`PSP5_DIST_MIRROR` so the finished title lands back in the working copy:
+
+```bash
+export PSP5_DIST_MIRROR=/mnt/c/Users/<you>/Documents/Repos/psp5/dist
+```
+
+It copies only after the title folder is complete, and replaces `eboot.bin`
+through a temporary name, so the mirror is never a half-written title. An ordinary
+relink moves the eboot alone; the 22 MB of assets go only when they change.
+
 `tools/build.sh` checks the SDK and RADV before it starts and says which one is
 wrong. It also needs zlib to be the one RADV was built with, which it finds beside
 `PS5_RADV` by default; `PS5_ZLIB` overrides it.

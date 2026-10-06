@@ -169,3 +169,30 @@ chmod 0777 "$app/eboot.bin"
 printf '==> %s: %s (eboot.bin %s bytes, %s asset files)\n' \
 	"$title_id" "$app" "$(stat -c %s "$app/eboot.bin")" \
 	"$(find "$app/assets" -type f | wc -l)"
+
+# A second copy of the finished title, for when the build tree is not where the
+# title is wanted - building on a Linux filesystem from a working copy on another
+# one, which is what WSL is. Set PSP5_DIST_MIRROR to the dist/ to keep in step.
+#
+# Mirrored after the title folder is complete and never before, so a mirror is
+# never a half-written title somebody might deploy. The eboot is replaced through a
+# temporary name for the same reason.
+if [[ -n ${PSP5_DIST_MIRROR:-} ]]; then
+	mirror="$PSP5_DIST_MIRROR/$title_id"
+	mkdir -p "$mirror"
+	# Assets are ~190 files that change only when PPSSPP's tree does; copy them
+	# only when the count or the total size differs, so an ordinary relink moves
+	# the eboot alone.
+	if [[ $(find "$mirror/assets" -type f 2>/dev/null | wc -l) != $(find "$app/assets" -type f | wc -l) ]] ||
+		[[ $(du -sb "$mirror/assets" 2>/dev/null | cut -f1) != $(du -sb "$app/assets" | cut -f1) ]]; then
+		rm -rf -- "$mirror/assets"
+		cp -a -- "$app/assets" "$mirror/assets"
+		mirrored_assets=" and the assets"
+	fi
+	mkdir -p "$mirror/sce_sys" "$mirror/sce_module"
+	cp -a -- "$app/sce_sys/." "$mirror/sce_sys/"
+	cp -a -- "$app/sce_module/." "$mirror/sce_module/"
+	cp -a -- "$app/eboot.bin" "$mirror/.eboot.bin.new"
+	mv -- "$mirror/.eboot.bin.new" "$mirror/eboot.bin"
+	printf '==> mirrored the eboot%s to %s\n' "${mirrored_assets:-}" "$mirror"
+fi
