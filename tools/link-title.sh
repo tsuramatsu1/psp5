@@ -142,13 +142,13 @@ mkdir -p "$app/sce_sys" "$app/sce_module"
 
 # eboot.bin is the converted module ELF, not a signed fake-SELF.
 #
-# That is what the loaders in use actually take: on the console this was developed
-# against, every working title - PS5SX2, and the others in /data/homebrew and on
-# USB - has an ELF magic (7f 45 4c 46) at the head of its eboot.bin, not a SELF's.
-# PS5_VulkanTemplate signs because its own runner wants that; a title launched by
-# the homebrew loader does not.
+# Measured, not assumed: psp5 launches on the console with the raw module ELF, and
+# every other homebrew title there carries one too (PS5SX2, Vita3K, PS5X360 - all
+# ELF magic at the head of eboot.bin). The launch failures that looked like a
+# signing problem were a registration problem; see docs/porting-notes.md.
 #
-# PSP5_SIGN_EBOOT=1 produces the signed one instead, for a loader that wants it.
+# PSP5_SIGN_EBOOT=1 produces the signed fake-SELF instead, for a loader that wants
+# one. Both forms are staged in dist/alternatives either way.
 if [[ -n ${PSP5_SIGN_EBOOT:-} ]]; then
 	"$tool" self --sign --in "$work/eboot.elf" --out "$app/eboot.bin" --magic 0x1D3D154F
 	"$tool" self --inspect --file "$app/eboot.bin" > /dev/null
@@ -156,6 +156,12 @@ if [[ -n ${PSP5_SIGN_EBOOT:-} ]]; then
 else
 	cp -- "$work/eboot.elf" "$app/eboot.bin"
 fi
+
+# Both forms staged beside the title, so either can be swapped in without a relink.
+mkdir -p "$root/dist/alternatives"
+cp -- "$work/eboot.elf" "$root/dist/alternatives/eboot.elf.bin"
+"$tool" self --sign --in "$work/eboot.elf" --out "$root/dist/alternatives/eboot.signed.bin" \
+	--magic 0x1D3D154F
 
 cp "$param" "$app/sce_sys/param.json"
 for asset in icon0.png pic0.dds pic1.dds snd0.at9; do

@@ -8,6 +8,8 @@
 #include "Common/GPU/Vulkan/VulkanDebug.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
 #include "Common/GPU/thin3d_create.h"
+#include "Common/System/Display.h"
+#include "Common/System/NativeApp.h"
 #include "Core/Config.h"
 #include "Core/System.h"
 #include "GPU/Vulkan/VulkanUtil.h"
@@ -64,6 +66,14 @@ bool PS5VulkanContext::Init(std::string *errorMessage) {
 		Shutdown();
 		return false;
 	}
+
+	// InitSurface has just adopted the display's own mode and written its size into
+	// g_display (the standalone patch does this; nothing else would have, because a
+	// title is never told a resolution). That sets the pixel size only, so derive
+	// the rest - the dp size and the DPI scales the UI lays itself out against -
+	// before any of PPSSPP's UI is built. Without this the UI measures itself
+	// against a zero-sized display.
+	Native_UpdateScreenScale(g_display.pixel_xres, g_display.pixel_yres, 1.0f);
 
 	bool useMultiThreading = g_Config.bRenderMultiThreading;
 	if (g_Config.iInflightFrames == 1) {

@@ -53,6 +53,35 @@ index 910f32214..18b5127d5 100644
  if(TargetBin)
  	if(APPLE)
  		if(NOT IOS)
+diff --git a/Common/GPU/Vulkan/VulkanContext.cpp b/Common/GPU/Vulkan/VulkanContext.cpp
+index 9b384731e..843cbcf4c 100644
+--- a/Common/GPU/Vulkan/VulkanContext.cpp
++++ b/Common/GPU/Vulkan/VulkanContext.cpp
+@@ -1116,6 +1116,24 @@ VkResult VulkanContext::ReinitSurface() {
+ 			}
+ 		}
+ 
++#if PPSSPP_PLATFORM(PS5)
++		// The console's display decides the mode; the title does not choose one.
++		// Nothing has told PPSSPP a resolution by this point, so g_display is still
++		// zero, the exact-match loop above can never hit, and the surface extent
++		// further down (image_size, from g_display) would be 0x0 even if it did.
++		// Take the first mode the display reports - Vulkan lists the preferred mode
++		// first - and adopt it as the display resolution.
++		if (display_mode == VK_NULL_HANDLE && mode_count > 0) {
++			const VkDisplayModeParametersKHR &chosen = mode_props[0].parameters;
++			display_mode = mode_props[0].displayMode;
++			mode_found = true;
++			g_display.pixel_xres = chosen.visibleRegion.width;
++			g_display.pixel_yres = chosen.visibleRegion.height;
++			INFO_LOG(Log::G3D, "PS5: adopting the display's preferred mode, %dx%d",
++				g_display.pixel_xres, g_display.pixel_yres);
++		}
++#endif
++
+ 		// Free the mode list now.
+ 		delete [] mode_props;
+ 
 diff --git a/Common/GPU/Vulkan/VulkanLoader.cpp b/Common/GPU/Vulkan/VulkanLoader.cpp
 index cb1f03b52..ef69cb19a 100644
 --- a/Common/GPU/Vulkan/VulkanLoader.cpp
