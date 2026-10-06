@@ -1,0 +1,133 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8e18a1387..9f2b6077b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1506,6 +1506,21 @@ elseif(WIN32)
+ 	# Don't care about SDL.
+ 	set(TargetBin PPSSPPWindows)
+ elseif(LIBRETRO)
++elseif(PPSSPP_PS5)
++	# psp5: a standalone title for the PlayStation 5. There is no window system and
++	# no SDL in the SDK sysroot, so the platform layer that would be SDL/ lives
++	# outside this tree, in the psp5 repository; PSP5_SRC_DIR points at it. PPSSPP's
++	# own UI is the frontend, so NativeAppSource is used unchanged.
++	#
++	# TargetBin is deliberately left unset: CMake does not link this title. The
++	# console's link is prospero-lld with a linker script, RADV whole-archived and a
++	# native tool that turns the ELF into the console's format, so psp5's
++	# tools/link-title.sh does it and CMake's job is to produce the archives. They
++	# are added below, once NativeAppSource is complete.
++	if(NOT PSP5_SRC_DIR)
++		message(FATAL_ERROR "PPSSPP_PS5 is set but PSP5_SRC_DIR is not")
++	endif()
++	include_directories(${PSP5_SRC_DIR})
+ else()
+ 	if(GOLD)
+ 		set(TargetBin PPSSPPGold)
+@@ -3031,6 +3046,28 @@ if(LIBRETRO)
+ 	add_subdirectory(libretro)
+ endif()
+ 
++if(PPSSPP_PS5)
++	# The two archives tools/link-title.sh links. They are separate because only the
++	# platform one is whole-archived: main() is reached from the CRT and the System_*
++	# definitions from PPSSPP's own code, and an archive member that nothing
++	# references strongly is dropped by the linker.
++	add_library(psp5_app STATIC ${NativeAppSource})
++	target_link_libraries(psp5_app ${LinkCommon} Common)
++
++	add_library(psp5_platform STATIC
++		${PSP5_SRC_DIR}/PS5Main.cpp
++		${PSP5_SRC_DIR}/PS5Audio.cpp
++		${PSP5_SRC_DIR}/PS5Paths.cpp
++		${PSP5_SRC_DIR}/PS5VulkanContext.cpp
++		${PSP5_SRC_DIR}/PS5VulkanLoader.cpp
++		${PSP5_SRC_DIR}/PS5Memory.cpp
++		${PSP5_SRC_DIR}/PS5GLStubs.cpp
++		${PSP5_SRC_DIR}/PS5LibcShims.cpp
++		${PSP5_SRC_DIR}/platform/platform.c
++	)
++	target_link_libraries(psp5_platform psp5_app)
++endif()
++
+ if(TargetBin)
+ 	if(APPLE)
+ 		if(NOT IOS)
+diff --git a/Common/GPU/Vulkan/VulkanLoader.cpp b/Common/GPU/Vulkan/VulkanLoader.cpp
+index cb1f03b52..ef69cb19a 100644
+--- a/Common/GPU/Vulkan/VulkanLoader.cpp
++++ b/Common/GPU/Vulkan/VulkanLoader.cpp
+@@ -258,6 +258,15 @@ static VulkanLibraryHandle vulkanLibrary;
+ typedef HINSTANCE VulkanLibraryHandle;
+ static VulkanLibraryHandle vulkanLibrary;
+ #define dlsym(x, y) GetProcAddress(x, y)
++#elif PPSSPP_PLATFORM(PS5)
++// The console has no Vulkan loader, and no dlopen for a title's own code. RADV is
++// linked into the title instead and reached through the one entry point its
++// archive exports, so the "library" here is only a non-null sentinel and every
++// global function is resolved by psp5's src/PS5VulkanLoader.cpp.
++typedef void *VulkanLibraryHandle;
++static VulkanLibraryHandle vulkanLibrary;
++extern "C" void *ps5_vk_global_proc(const char *name);
++#define dlsym(x, y) ps5_vk_global_proc(y)
+ #else
+ typedef void *VulkanLibraryHandle;
+ static VulkanLibraryHandle vulkanLibrary;
+@@ -355,7 +364,11 @@ static const char * const so_names[] = {
+ 
+ #if !PPSSPP_PLATFORM(IOS_APP_STORE)
+ static VulkanLibraryHandle VulkanLoadLibrary(std::string *errorString) {
+-#if PPSSPP_PLATFORM(SWITCH)
++#if PPSSPP_PLATFORM(PS5)
++	// Statically linked: there is nothing to open, but the handle must be non-null
++	// for VulkanLoad to go on and resolve the functions through the driver.
++	return (VulkanLibraryHandle)1;
++#elif PPSSPP_PLATFORM(SWITCH)
+ 	// Always unavailable, for now.
+ 	return nullptr;
+ #elif PPSSPP_PLATFORM(UWP)
+@@ -416,6 +429,8 @@ static void VulkanFreeLibrary(VulkanLibraryHandle &h) {
+ 	if (h) {
+ #if PPSSPP_PLATFORM(SWITCH)
+ 		// Can't load, and can't free.
++#elif PPSSPP_PLATFORM(PS5)
++		// A sentinel, not a mapping: there is nothing to close.
+ #elif PPSSPP_PLATFORM(WINDOWS)
+ 		FreeLibrary(h);
+ #else
+@@ -433,7 +448,14 @@ void VulkanSetAvailable(bool available) {
+ }
+ 
+ bool VulkanMayBeAvailable() {
+-#if PPSSPP_PLATFORM(IOS)
++#if PPSSPP_PLATFORM(PS5)
++	// RADV is linked into the title: if this build exists, Vulkan is there. The
++	// probe below creates a throwaway instance and device to find out, which on the
++	// console is a second device creation that buys nothing.
++	g_vulkanAvailabilityChecked = true;
++	g_vulkanMayBeAvailable = true;
++	return true;
++#elif PPSSPP_PLATFORM(IOS)
+ 	g_vulkanAvailabilityChecked = true;
+ 	// MoltenVK does no longer seem to support iOS <= 12, despite what the docs say.
+ 	g_vulkanMayBeAvailable = System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 13;
+diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
+index 4a2692496..6ec93315b 100644
+--- a/UI/NativeApp.cpp
++++ b/UI/NativeApp.cpp
+@@ -470,6 +470,15 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ #elif PPSSPP_PLATFORM(SWITCH)
+ 	g_Config.memStickDirectory = g_Config.internalDataDirectory / "config/ppsspp";
+ 	g_Config.flash0Directory = g_Config.internalDataDirectory / "assets/flash0";
++#elif PPSSPP_PLATFORM(PS5)
++	// The console has no $HOME, no $XDG_CONFIG_HOME, and no current directory worth
++	// trusting: getcwd is not provided. So these are the paths the title passed to
++	// NativeInit, not anything derived from the environment. Without this branch the
++	// generic one below puts the memory stick at a relative ./config/ppsspp, which on
++	// the console resolves nowhere, and saves are silently lost.
++	g_Config.memStickDirectory = Path(savegame_dir);
++	g_Config.flash0Directory = Path(external_dir) / "flash0";
++	g_Config.defaultCurrentDirectory = Path(savegame_dir);
+ #elif !PPSSPP_PLATFORM(WINDOWS)
+ 	std::string config;
+ 	if (getenv("XDG_CONFIG_HOME") != NULL)

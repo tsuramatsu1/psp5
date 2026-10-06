@@ -1,0 +1,7 @@
+# The pinned PPSSPP checkout and anything else fetched at build time.
+/.deps/
+# Build output.
+/build/
+*.o
+*.a
+*.elf
