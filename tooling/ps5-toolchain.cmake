@@ -67,5 +67,13 @@ if(DEFINED ENV{PS5_RADV})
 	set(PSP5_EXTRA_INCLUDES "-I$ENV{PS5_RADV}/include")
 endif()
 
-set(CMAKE_C_FLAGS_INIT   "-O2 -fPIC -w -Dstatic_assert=_Static_assert -DZSTD_TRACE=0 ${PSP5_EXTRA_INCLUDES}")
-set(CMAKE_CXX_FLAGS_INIT "-O2 -fPIC -w -DZSTD_TRACE=0 ${PSP5_EXTRA_INCLUDES}")
+# -fno-omit-frame-pointer is not optional, and not a debug-only flag: the console's
+# backtraces are frame-pointer walks, so without it a crash report carries a rip and
+# nothing else. Every build keeps it, including a release one - a crash nobody can
+# read costs far more than the register.
+#
+# -ffunction-sections -fdata-sections keep this link smaller; it is a large one.
+set(PSP5_COMMON_FLAGS "-O2 -fPIC -w -fno-omit-frame-pointer -ffunction-sections -fdata-sections")
+
+set(CMAKE_C_FLAGS_INIT   "${PSP5_COMMON_FLAGS} -Dstatic_assert=_Static_assert -DZSTD_TRACE=0 ${PSP5_EXTRA_INCLUDES}")
+set(CMAKE_CXX_FLAGS_INIT "${PSP5_COMMON_FLAGS} -DZSTD_TRACE=0 ${PSP5_EXTRA_INCLUDES}")

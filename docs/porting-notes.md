@@ -149,6 +149,52 @@ success until the converter fails identically.
 referenced only from the CRT and the `System_*` definitions only from PPSSPP's own
 code; an archive member nothing references strongly is dropped, silently.
 
+## Reading a crash
+
+`-fno-omit-frame-pointer` is in `tooling/ps5-toolchain.cmake` for every build,
+release included. The console's backtraces are frame-pointer walks, so without it a
+crash report carries a `rip` and nothing else.
+
+```bash
+python3 tools/symbolise.py < crash.txt      # paste the klog block
+```
+
+It reads the load base from the report's own `xotext:` line, subtracts it, and runs
+`llvm-addr2line` against `build/ps5/link/llvm-pie.elf` — the pre-conversion ELF of
+the build that crashed. All three are easy to get wrong and each produces confident,
+wrong names.
+
+What the signals usually mean here:
+
+| Seen | Usually |
+| --- | --- |
+| SIGSEGV, `rip` 0 or wild, **fault address equal to rip** | a call through an unfilled import — see below |
+| SIGSEGV, `rip: 0`, empty backtrace, at the *end* of a run | the title returned from `_start` rather than taking the shell exit |
+| SIGSYS with `rip` in `0x8xxxxxxxx` | a system call the console refuses a title; route it through the platform layer |
+| SIGBUS/SIGSEGV inside JIT code | executable memory or fastmem not set up the platform layer's way |
+
+A call through NULL pushes no frame, so the backtrace names the *caller*. When it
+names a function that plainly cannot fault, ask what that function calls.
+
+### The unfilled-import trap
+
+The SDK's headers declare a function, a stub library satisfies the link, and the
+console never fills the import — so the first call jumps to address 0. Nothing in
+the build warns, beyond the check `tools/link-title.sh` already does.
+
+A check worth repeating after any change to what psp5 links: every symbol psp5
+imports for which the platform layer has a `ps5_` replacement must be bound by
+PS5_Vulkan's recipe. As of the FFmpeg build that is true of all 416 imports, with
+one gap the platform layer cannot close:
+
+**`getcwd` is imported and has no `ps5_getcwd`.** It is the canonical case of this
+trap — declared, linked, and fatal the first time it is called. In PPSSPP it is
+reached only from `File::GetCurDirectory()`, whose single caller is the driver
+manager screen, so it is not on the launch path; it will fault the day something
+else calls it. The right fix is the platform layer plus the recipe, not a shim
+here, because then every title on this stack gets it. Until then, do not add a
+caller.
+
 ## Things deliberately not done
 
 - **No frontend.** PPSSPP's UI is the frontend. A separate game browser would be a
