@@ -1,0 +1,7 @@
+# The build runs on Linux (or WSL) even when the working copy is on Windows: a
+# shell script or a patch checked out with CRLF fails there, and a patch fails in a
+# way that looks like the patch is wrong rather than the line endings.
+* text=auto eol=lf
+
+# Patches are byte-exact against the pinned tree. Never touch them.
+*.patch -text
