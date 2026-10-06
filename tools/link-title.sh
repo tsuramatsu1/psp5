@@ -66,6 +66,22 @@ mapfile -t extra_libs < <(find "$build/lib" -name '*.a' \
 	! -name 'libpsp5_platform.a' ! -name 'libpsp5_app.a' \
 	! -name 'libCore.a' ! -name 'libCommon.a' | sort)
 
+# FFmpeg, when tools/build-ffmpeg.sh has run: it builds outside the CMake tree, so
+# its archives are not under build/lib and have to be named here. Without them the
+# link fails on avcodec_*, and the PSP's video and Atrac3 audio are the reason to
+# have built it.
+ffmpeg_prefix=${PSP5_FFMPEG_PREFIX:-$root/build/ffmpeg}
+ffmpeg_libs=()
+if [[ -f $ffmpeg_prefix/lib/libavcodec.a ]]; then
+	# avformat before avcodec before avutil: each uses the next.
+	for name in libavformat libavcodec libswscale libswresample libavutil; do
+		[[ -f $ffmpeg_prefix/lib/$name.a ]] && ffmpeg_libs+=("$ffmpeg_prefix/lib/$name.a")
+	done
+	printf '==> linking with FFmpeg from %s\n' "$ffmpeg_prefix"
+else
+	echo "==> no FFmpeg (tools/build-ffmpeg.sh); PSP video and Atrac3 audio will be missing"
+fi
+
 # --no-dynamic-linker is what keeps this title convertible.
 #
 # Mesa names every Vulkan entry point in its dispatch tables through a weak
@@ -90,7 +106,7 @@ echo "==> linking"
 	--no-dynamic-linker \
 	-e _start -o "$work/llvm-pie.elf" \
 	"$work/obj/app_crt.o" \
-	--start-group "${psp5_libs[@]}" "${extra_libs[@]}" --end-group \
+	--start-group "${psp5_libs[@]}" "${extra_libs[@]}" ${ffmpeg_libs[@]+"${ffmpeg_libs[@]}"} --end-group \
 	"$work/stubs/libSceAgc.so" "$work/stubs/libSceAgcDriver.so" \
 	"${radv_link_inputs[@]}" \
 	--as-needed "$sdk"/target/lib/*.so

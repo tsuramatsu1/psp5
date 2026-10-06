@@ -159,11 +159,18 @@ code; an archive member nothing references strongly is dropped, silently.
 - **No networking.** Sockets exist on the console but little beyond them is proven.
   `SYSPROP_SUPPORTS_HTTPS` is false, so RetroAchievements and the update check stay
   off rather than stalling a frame on a retry loop.
-- **FFmpeg is off by default.** `tools/build.sh` builds without it until
-  `PSP5_FFMPEG_PREFIX` is set. The PSP's video and some of its audio need it —
-  without it, game intros and menu backgrounds are missing — so a release build
-  must have it. It is off first only because it is a long cross-build that is
-  irrelevant to whether the emulator itself compiles.
+- **FFmpeg is built separately.** `tools/build-ffmpeg.sh` cross-builds the FFmpeg
+  PPSSPP pins (its own 3.0-era branch, not a current one) with the decoder, demuxer
+  and parser set upstream's `linux_x86-64.sh` selects, no assembly and no zlib.
+  `tools/build.sh` then takes `PSP5_FFMPEG_PREFIX`. It is a separate script only
+  because it is slow and never changes.
+
+  Its archives sit outside the CMake tree, so `tools/link-title.sh` names them
+  explicitly, in dependency order (`avformat`, `avcodec`, `swscale`, `swresample`,
+  `avutil`) — they are not picked up by the `build/lib/*.a` sweep. They link as
+  local symbols because of `--exclude-libs=ALL`, so to check they are really there,
+  look at `build/ps5/link/llvm-pie.elf` and not at the converted `eboot.bin`, which
+  keeps no ordinary symbol table.
 
 ## Before the first console run
 

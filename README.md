@@ -19,8 +19,9 @@ what a title needs and a core does not.
 | --- | --- |
 | PPSSPP's emulator core, JIT, memory arena and Vulkan backend cross-compile | **done** |
 | PPSSPP's UI and psp5's platform layer cross-compile | **done** |
-| The title links, converts and signs | **done** — a 43 MB `eboot.bin`, integrity valid |
-| The title folder is complete | **done** — `eboot.bin`, `sce_module/libc.prx`, `sce_sys/param.json`, 190 asset files |
+| FFmpeg cross-builds and links in (PSP video, Atrac3 audio) | **done** |
+| The title links, converts and signs | **done** — a 47 MB `eboot.bin`, integrity valid |
+| The title folder is complete | **done** — `eboot.bin`, `sce_module/libc.prx`, `sce_sys/{param.json,icon0.png}`, 190 asset files |
 | Vulkan on RADV, `VK_KHR_display` presentation | **written**, not yet run |
 | Pad, audio, title paths | **written**, not yet run |
 | Booting on a console | **not done** |
@@ -56,10 +57,21 @@ them.
 ```bash
 export PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk   # the fork
 export PS5_RADV=/path/to/radv-release             # PS5_Vulkan's output
-./tools/build.sh
+export PS5_VULKAN=/path/to/PS5_Vulkan             # built, for the link
+
+./tools/build-ffmpeg.sh                           # once; slow, and worth it
+PSP5_FFMPEG_PREFIX=$PWD/build/ffmpeg ./tools/build.sh
+./tools/link-title.sh                             # -> dist/PPSA99131/
 ```
 
-`tools/build.sh` checks both before it starts and says which one is wrong.
+`tools/build.sh` checks the SDK and RADV before it starts and says which one is
+wrong. It also needs zlib to be the one RADV was built with, which it finds beside
+`PS5_RADV` by default; `PS5_ZLIB` overrides it.
+
+FFmpeg is a separate script because it is a slow cross-build that never changes,
+while `tools/build.sh` is run over and over. Without it `tools/build.sh` still
+works and the link says so, but the PSP's video and its Atrac3 audio are missing —
+game intros and menu backgrounds included — so a release build has it.
 
 To work on the port itself: edit `.deps/ppsspp-src`, build with `PSP5_DEV=1` to
 skip the reset, and write the patch back when it works.
