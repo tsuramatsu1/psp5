@@ -23,6 +23,7 @@
 #include "Common/Input/InputState.h"
 #include "Common/Input/KeyCodes.h"
 #include "Common/Log.h"
+#include "Common/Log/LogManager.h"
 #include "Common/System/NativeApp.h"
 #include "Common/System/System.h"
 #include "Common/TimeUtil.h"
@@ -310,6 +311,15 @@ int main(int argc, char *argv[]) {
 	// to PPSSPP explicitly rather than derived.
 	const char *args[] = {"psp5"};
 	NativeInit(ARRAY_SIZE(args), args, memstick.c_str(), assets.c_str(), cache.c_str());
+
+	// PPSSPP's own logs into klog, through the stderr capture platform_init set up.
+	// Without this a release build keeps them to itself: the first console runs
+	// showed psp5's own lines and nothing from the emulator, so a failure inside
+	// PPSSPP - "Failed to generate UI atlas!" among them - was invisible and had to
+	// be inferred from where it crashed. Noisy, and worth it during bring-up.
+	g_logManager.SetAllLogLevels(LogLevel::LINFO);
+	g_logManager.SetAllLogEnable(true);
+	g_logManager.SetOutputsEnabled(LogOutput::Stdio);
 
 	g_graphics = new PS5VulkanContext();
 	std::string error;
