@@ -5,3 +5,5 @@
 *.o
 *.a
 *.elf
+# Built title folders (tools/link-title.sh).
+/dist/
