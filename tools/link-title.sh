@@ -140,21 +140,21 @@ app="$root/dist/$title_id"
 rm -rf -- "$app"
 mkdir -p "$app/sce_sys" "$app/sce_module"
 
-# eboot.bin is the converted module ELF, not a signed fake-SELF.
+# eboot.bin is a signed fake-SELF. Always.
 #
-# Measured, not assumed: psp5 launches on the console with the raw module ELF, and
-# every other homebrew title there carries one too (PS5SX2, Vita3K, PS5X360 - all
-# ELF magic at the head of eboot.bin). The launch failures that looked like a
-# signing problem were a registration problem; see docs/porting-notes.md.
+# This is the form that launched on the console. The raw module ELF is what other
+# homebrew titles there carry, which is why this script staged one for a while -
+# but psp5's first successful launch was with the signed eboot, so that is the
+# default and it does not change again without a console run saying otherwise.
 #
-# PSP5_SIGN_EBOOT=1 produces the signed fake-SELF instead, for a loader that wants
-# one. Both forms are staged in dist/alternatives either way.
-if [[ -n ${PSP5_SIGN_EBOOT:-} ]]; then
+# PSP5_EBOOT_ELF=1 stages the raw module ELF instead. Both forms are written to
+# dist/alternatives either way, so either can be swapped in without a relink.
+if [[ -n ${PSP5_EBOOT_ELF:-} ]]; then
+	cp -- "$work/eboot.elf" "$app/eboot.bin"
+	echo "==> eboot.bin is the raw module ELF (PSP5_EBOOT_ELF)"
+else
 	"$tool" self --sign --in "$work/eboot.elf" --out "$app/eboot.bin" --magic 0x1D3D154F
 	"$tool" self --inspect --file "$app/eboot.bin" > /dev/null
-	echo "==> eboot.bin is a signed fake-SELF (PSP5_SIGN_EBOOT)"
-else
-	cp -- "$work/eboot.elf" "$app/eboot.bin"
 fi
 
 # Both forms staged beside the title, so either can be swapped in without a relink.
