@@ -5,6 +5,9 @@
 
 #include "PS5Paths.h"
 
+#include <cerrno>
+#include <cstdio>
+#include <dirent.h>
 #include <sys/stat.h>
 
 #include "platform/platform.h"
@@ -37,6 +40,52 @@ bool EnsureDir(const std::string &path) {
 }
 
 }  // namespace
+
+void Probe() {
+	// Asset reads failed on the console while writes under /app0 worked, so this
+	// reports what each filesystem call actually does rather than leaving it to be
+	// inferred from where PPSSPP gave up. Cheap, and it runs once.
+	auto report = [](const char *what, const std::string &path) {
+		struct stat st {};
+		if (stat(path.c_str(), &st) != 0) {
+			say("probe: %-10s %-44s stat failed, errno %d", what, path.c_str(), errno);
+			return;
+		}
+		say("probe: %-10s %-44s %s, %lld bytes, mode %o", what, path.c_str(),
+		    S_ISDIR(st.st_mode) ? "dir" : "file", (long long)st.st_size,
+		    (unsigned)(st.st_mode & 07777));
+	};
+
+	report("root", kRoot);
+	report("assets", Assets());
+	report("memstick", Memstick());
+
+	const std::string atlas = Assets() + "/font_atlas.zim";
+	report("atlas", atlas);
+
+	// The read itself, which is what PPSSPP could not do.
+	if (FILE *fh = fopen(atlas.c_str(), "rb")) {
+		unsigned char head[4] = {};
+		const size_t got = fread(head, 1, sizeof(head), fh);
+		say("probe: fopen ok, read %zu bytes: %02x %02x %02x %02x", got, head[0], head[1],
+		    head[2], head[3]);
+		fclose(fh);
+	} else {
+		say("probe: fopen failed on %s, errno %d", atlas.c_str(), errno);
+	}
+
+	// And the directory walk, which is how PPSSPP's VFS finds anything at all.
+	if (DIR *dir = opendir(Assets().c_str())) {
+		int entries = 0;
+		while (readdir(dir) != nullptr) {
+			entries++;
+		}
+		closedir(dir);
+		say("probe: opendir(%s) listed %d entries", Assets().c_str(), entries);
+	} else {
+		say("probe: opendir failed on %s, errno %d", Assets().c_str(), errno);
+	}
+}
 
 bool Prepare() {
 	// The memory stick is the one psp5 cannot run without: PPSSPP puts saves, save

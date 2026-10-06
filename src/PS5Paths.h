@@ -26,4 +26,9 @@ std::string Log();         // /app0/psp5.log
 // which is fatal: PPSSPP has nowhere to put a save.
 bool Prepare();
 
+// Reports what the filesystem actually does for the title's own paths: stat,
+// fopen and opendir, each with errno. For bring-up, when a read fails and the
+// reason would otherwise have to be inferred from where PPSSPP gave up.
+void Probe();
+
 }  // namespace PS5Paths

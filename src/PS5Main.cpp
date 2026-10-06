@@ -298,6 +298,8 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	PS5Paths::Probe();
+
 	if (!pad_open()) {
 		// Not fatal: the title still boots and its UI says there is no controller.
 		say("warning: no controller");
