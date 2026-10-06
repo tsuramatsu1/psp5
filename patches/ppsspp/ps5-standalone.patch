@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 910f32214..18b5127d5 100644
+index 8e18a1387..9f2b6077b 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1498,6 +1498,21 @@ elseif(WIN32)
+@@ -1506,6 +1506,21 @@ elseif(WIN32)
  	# Don't care about SDL.
  	set(TargetBin PPSSPPWindows)
  elseif(LIBRETRO)
@@ -24,7 +24,7 @@ index 910f32214..18b5127d5 100644
  else()
  	if(GOLD)
  		set(TargetBin PPSSPPGold)
-@@ -3019,6 +3034,28 @@ if(LIBRETRO)
+@@ -3031,6 +3046,28 @@ if(LIBRETRO)
  	add_subdirectory(libretro)
  endif()
  
@@ -54,10 +54,10 @@ index 910f32214..18b5127d5 100644
  	if(APPLE)
  		if(NOT IOS)
 diff --git a/Common/GPU/Vulkan/VulkanContext.cpp b/Common/GPU/Vulkan/VulkanContext.cpp
-index 9b384731e..843cbcf4c 100644
+index 4c761c842..522904189 100644
 --- a/Common/GPU/Vulkan/VulkanContext.cpp
 +++ b/Common/GPU/Vulkan/VulkanContext.cpp
-@@ -1116,6 +1116,24 @@ VkResult VulkanContext::ReinitSurface() {
+@@ -1119,6 +1119,24 @@ VkResult VulkanContext::ReinitSurface() {
  			}
  		}
  
@@ -170,10 +170,31 @@ index e7fd30d52..951dcec36 100644
  
  int Config::NextValidBackend() {
 diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
-index 4a2692496..6ec93315b 100644
+index 4a2692496..0549f3f1e 100644
 --- a/UI/NativeApp.cpp
 +++ b/UI/NativeApp.cpp
-@@ -470,6 +470,15 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+@@ -359,10 +359,19 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ 	// Packed assets are included in app
+ 	g_VFS.Register("", new DirectoryReader(Path(external_dir)));
+ #endif
++#if PPSSPP_PLATFORM(PS5)
++	// The title's own assets, at the absolute path main() passed in. Nothing else
++	// below finds them on a console: ASSETS_DIR and the /usr/share entries are host
++	// paths, there is no executable directory to resolve against, and the bare
++	// "assets" entry is relative to a working directory the console does not
++	// provide. Without this the VFS is empty - every asset read fails, starting
++	// with the UI atlas, and the first unchecked getImage() crashes.
++	g_VFS.Register("", new DirectoryReader(Path(external_dir)));
++#endif
+ #if defined(ASSETS_DIR)
+ 	g_VFS.Register("", new DirectoryReader(Path(ASSETS_DIR)));
+ #endif
+-#if !defined(MOBILE_DEVICE) && !defined(_WIN32) && !PPSSPP_PLATFORM(SWITCH)
++#if !defined(MOBILE_DEVICE) && !defined(_WIN32) && !PPSSPP_PLATFORM(SWITCH) && !PPSSPP_PLATFORM(PS5)
+ 	g_VFS.Register("", new DirectoryReader(File::GetExeDirectory() / "assets"));
+ 	g_VFS.Register("", new DirectoryReader(File::GetExeDirectory()));
+ 	g_VFS.Register("", new DirectoryReader(Path("/usr/local/share/ppsspp/assets")));
+@@ -470,6 +479,15 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
  #elif PPSSPP_PLATFORM(SWITCH)
  	g_Config.memStickDirectory = g_Config.internalDataDirectory / "config/ppsspp";
  	g_Config.flash0Directory = g_Config.internalDataDirectory / "assets/flash0";
