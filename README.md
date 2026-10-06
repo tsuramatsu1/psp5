@@ -29,8 +29,9 @@ what a title needs and a core does not.
 is well-formed, not working. Whether it boots, draws a frame or plays a game is
 unknown, and `docs/porting-notes.md` lists what is most likely to be wrong first.
 
-`sce_sys/icon0.png` is not in the repository; supply one before release, or the
-title has no icon on the home screen. `tools/link-title.sh` copies it when present.
+`sce_sys/icon0.png` is drawn by `tools/make-icon.py` (512x512, RGB, no alpha, as the
+console wants) and `tools/link-title.sh` stages it. Replace either the file or the
+script to change it.
 
 ## What it is made of
 

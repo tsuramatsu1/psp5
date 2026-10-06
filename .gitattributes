@@ -5,3 +5,6 @@
 
 # Patches are byte-exact against the pinned tree. Never touch them.
 *.patch -text
+
+# The icon is a binary; never line-ending-converted.
+*.png binary
