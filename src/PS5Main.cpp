@@ -28,6 +28,7 @@
 #include "Common/System/System.h"
 #include "Common/TimeUtil.h"
 #include "Core/Config.h"
+#include "Core/KeyMap.h"
 #include "Core/System.h"
 
 #include "PS5Audio.h"
@@ -74,6 +75,27 @@ constexpr ButtonMap kButtons[] = {
 
 // What each player's buttons were at the previous poll, so only edges are sent.
 uint32_t g_previousButtons[PAD_PLAYERS] = {};
+
+// Which players PPSSPP has been told about, one bit each.
+//
+// Announcing a pad is not cosmetic: KeyMap::NotifyPadConnected is what makes
+// PPSSPP run AutoConfForPad and install DEFAULT_MAPPING_PAD for that device. Until
+// it does, the only bindings that answer are the device-independent ones - which
+// is the d-pad and nothing else, so every face button does nothing. Every other
+// port announces its pad (SDL, Windows, Android); psp5 did not.
+uint32_t g_announcedPlayers = 0;
+
+void AnnouncePad(int player) {
+	if (g_announcedPlayers & (1u << player)) {
+		return;
+	}
+	g_announcedPlayers |= 1u << player;
+	// The name picks the default mapping and is what the controls screen shows.
+	char name[32];
+	snprintf(name, sizeof(name), "DualSense %d", player + 1);
+	KeyMap::NotifyPadConnected((InputDeviceID)(DEVICE_ID_PAD_0 + player), name);
+	say("pad: player %d announced to PPSSPP as \"%s\"", player, name);
+}
 
 void SendButtonEdges(int player, uint32_t held, uint32_t previous) {
 	const InputDeviceID device = (InputDeviceID)(DEVICE_ID_PAD_0 + player);
@@ -127,6 +149,8 @@ void PollInput() {
 		} else if (!pad_player(player, &current)) {
 			continue;
 		}
+		// First time this player's controller is seen, so PPSSPP maps it.
+		AnnouncePad(player);
 		// A reading taken while the shell holds the pad (the home screen, a system
 		// dialog) is not input for the title.
 		if (current.held & PAD_INTERCEPTED) {

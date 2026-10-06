@@ -7,6 +7,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <ctime>
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -73,6 +74,24 @@ void Probe() {
 	} else {
 		say("probe: fopen failed on %s, errno %d", atlas.c_str(), errno);
 	}
+
+	// The clock. PPSSPP times frames and paces emulation with
+	// clock_gettime(CLOCK_MONOTONIC), and its first console run reported elapsed
+	// times near -1.79e9 seconds - the size of a Unix epoch, which is what a
+	// monotonic clock must never return. So check what each clock actually gives,
+	// and whether two reads of the same one advance sensibly.
+	auto clock_report = [](const char *name, clockid_t id) {
+		struct timespec a {}, b {};
+		const int rc_a = clock_gettime(id, &a);
+		for (volatile int spin = 0; spin < 2000000; spin++) {
+		}
+		const int rc_b = clock_gettime(id, &b);
+		const double delta = (double)(b.tv_sec - a.tv_sec) + (double)(b.tv_nsec - a.tv_nsec) / 1e9;
+		say("probe: clock %-10s rc=%d/%d  tv_sec=%lld -> %lld  delta=%.6fs", name, rc_a, rc_b,
+		    (long long)a.tv_sec, (long long)b.tv_sec, delta);
+	};
+	clock_report("MONOTONIC", CLOCK_MONOTONIC);
+	clock_report("REALTIME", CLOCK_REALTIME);
 
 	// And the directory walk, which is how PPSSPP's VFS finds anything at all.
 	if (DIR *dir = opendir(Assets().c_str())) {
