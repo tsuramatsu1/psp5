@@ -54,23 +54,32 @@ struct ButtonMap {
 	InputKeyCode code;
 };
 
+// These are the codes PPSSPP's own defaultPadMap binds for DEVICE_ID_PAD_0
+// (Core/KeyMapDefaults.cpp), not the names they read like. Sending the
+// obvious-looking NKCODE_BUTTON_A/B/X/Y instead leaves every face button
+// unmapped, because nothing in the default map mentions them - only the d-pad
+// worked, since NKCODE_DPAD_* is what the map really wants.
+//
+//   cross  BUTTON_2    triangle BUTTON_1    L1 BUTTON_7   options   BUTTON_10
+//   circle BUTTON_3    square   BUTTON_4    R1 BUTTON_8   touch pad BUTTON_9
+//
+// L3 and R3 are deliberately not in PPSSPP's default map; they are sent anyway so
+// they can be bound in Controls without psp5 changing.
 constexpr ButtonMap kButtons[] = {
-    {PAD_CROSS, NKCODE_BUTTON_A},
-    {PAD_CIRCLE, NKCODE_BUTTON_B},
-    {PAD_SQUARE, NKCODE_BUTTON_X},
-    {PAD_TRIANGLE, NKCODE_BUTTON_Y},
-    {PAD_L1, NKCODE_BUTTON_L1},
-    {PAD_R1, NKCODE_BUTTON_R1},
-    {PAD_L3, NKCODE_BUTTON_THUMBL},
-    {PAD_R3, NKCODE_BUTTON_THUMBR},
+    {PAD_CROSS, NKCODE_BUTTON_2},     // CTRL_CROSS
+    {PAD_CIRCLE, NKCODE_BUTTON_3},    // CTRL_CIRCLE
+    {PAD_SQUARE, NKCODE_BUTTON_4},    // CTRL_SQUARE
+    {PAD_TRIANGLE, NKCODE_BUTTON_1},  // CTRL_TRIANGLE
+    {PAD_L1, NKCODE_BUTTON_7},        // CTRL_LTRIGGER
+    {PAD_R1, NKCODE_BUTTON_8},        // CTRL_RTRIGGER
+    {PAD_OPTIONS, NKCODE_BUTTON_10},  // CTRL_START
+    {PAD_TOUCH_PAD, NKCODE_BUTTON_9}, // CTRL_SELECT
     {PAD_UP, NKCODE_DPAD_UP},
     {PAD_DOWN, NKCODE_DPAD_DOWN},
     {PAD_LEFT, NKCODE_DPAD_LEFT},
     {PAD_RIGHT, NKCODE_DPAD_RIGHT},
-    {PAD_OPTIONS, NKCODE_BUTTON_START},
-    // The touch pad click is the button left for "select", which PPSSPP's default
-    // mapping uses for the PSP's SELECT.
-    {PAD_TOUCH_PAD, NKCODE_BUTTON_SELECT},
+    {PAD_L3, NKCODE_BUTTON_THUMBL},
+    {PAD_R3, NKCODE_BUTTON_THUMBR},
 };
 
 // What each player's buttons were at the previous poll, so only edges are sent.
