@@ -31,6 +31,7 @@
 #include "gfx/vk/vk_renderer.hpp"
 #include "ui/fonts.hpp"
 
+#include "PS5Log.h"
 #include "PS5Paths.h"
 #include "platform/platform.h"
 
@@ -70,7 +71,7 @@ bool LoadFont(hui::gfx::VkRenderer &renderer, const char *name, hui::gfx::Font *
 	std::string data;
 	const std::string path = std::string(kFontDir) + "/" + name;
 	if (!ReadWholeFile(path, &data) || !font->load(data)) {
-		say("ui: font %s failed (%s)", name, font->error().c_str());
+		psp5::Trace("ui: font %s failed (%s)", name, font->error().c_str());
 		return false;
 	}
 	ref->font = font;
@@ -160,7 +161,7 @@ bool Surface::Begin(const AuroraDevice &gpu) {
 	passInfo.dependencyCount = 1;
 	passInfo.pDependencies = &dependency;
 	if (vkCreateRenderPass(device_, &passInfo, nullptr, &pass_) != VK_SUCCESS) {
-		say("ui: no render pass");
+		psp5::Trace("ui: no render pass");
 		return false;
 	}
 
@@ -182,7 +183,7 @@ bool Surface::Begin(const AuroraDevice &gpu) {
 		viewInfo.subresourceRange.levelCount = 1;
 		viewInfo.subresourceRange.layerCount = 1;
 		if (vkCreateImageView(device_, &viewInfo, nullptr, &views_[i]) != VK_SUCCESS) {
-			say("ui: no image view %u", i);
+			psp5::Trace("ui: no image view %u", i);
 			return false;
 		}
 		VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
@@ -193,7 +194,7 @@ bool Surface::Begin(const AuroraDevice &gpu) {
 		fbInfo.height = (uint32_t)height_;
 		fbInfo.layers = 1;
 		if (vkCreateFramebuffer(device_, &fbInfo, nullptr, &framebuffers_[i]) != VK_SUCCESS) {
-			say("ui: no framebuffer %u", i);
+			psp5::Trace("ui: no framebuffer %u", i);
 			return false;
 		}
 	}
@@ -202,7 +203,7 @@ bool Surface::Begin(const AuroraDevice &gpu) {
 	poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	poolInfo.queueFamilyIndex = gpu.queueFamily;
 	if (vkCreateCommandPool(device_, &poolInfo, nullptr, &pool_) != VK_SUCCESS) {
-		say("ui: no command pool");
+		psp5::Trace("ui: no command pool");
 		return false;
 	}
 
@@ -344,7 +345,7 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	volkLoadInstance((VkInstance)gpu.instance);
 	volkLoadDevice((VkDevice)gpu.device);
 
-	say("ui: volk loaded");
+	psp5::Trace("ui: volk loaded");
 
 	Surface surface;
 	if (!surface.Begin(gpu)) {
@@ -352,7 +353,7 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 		return false;
 	}
 
-	say("ui: surface ready, %d frames in flight", (int)surface.framesInFlight());
+	psp5::Trace("ui: surface ready, %d frames in flight", (int)surface.framesInFlight());
 
 	hui::gfx::VkRenderer renderer;
 	hui::gfx::VkRendererConfig config;
@@ -365,14 +366,14 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	config.subpass = 0;
 	config.samples = VK_SAMPLE_COUNT_1_BIT;
 	if (!renderer.init(config)) {
-		say("ui: the kit's renderer would not start");
+		psp5::Trace("ui: the kit's renderer would not start");
 		surface.End();
 		return false;
 	}
 
 	// The six faces the designs use. Without them nothing can be drawn, so a
 	// missing font is the one reason to give up and let PPSSPP's UI take over.
-	say("ui: renderer started");
+	psp5::Trace("ui: renderer started");
 
 	hui::gfx::Font regular, semibold, display, mono, pixel, hand;
 	hui::ui::Fonts fonts;
@@ -382,26 +383,26 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	    !LoadFont(renderer, "dejavu-sans-mono.huifont", &mono, &fonts.mono) ||
 	    !LoadFont(renderer, "press-start-2p.huifont", &pixel, &fonts.pixel) ||
 	    !LoadFont(renderer, "patrick-hand.huifont", &hand, &fonts.hand)) {
-		say("ui: fonts missing from %s - falling back to PPSSPP's interface", kFontDir);
+		psp5::Trace("ui: fonts missing from %s - falling back to PPSSPP's interface", kFontDir);
 		renderer.release();
 		surface.End();
 		return false;
 	}
 
-	say("ui: fonts loaded");
+	psp5::Trace("ui: fonts loaded");
 
 	hui::demo::Catalog catalog;
 	catalog.build_covers(renderer, fonts);
-	say("ui: covers built (%d items)", (int)catalog.size());
+	psp5::Trace("ui: covers built (%d items)", (int)catalog.size());
 
 	hui::Settings settings;
 	hui::app::Telemetry telemetry;
 	hui::app::Context context{fonts, catalog, telemetry, settings};
 	std::unique_ptr<hui::app::Concept> aurora = hui::concepts::make_aurora(context);
 	aurora->enter();
-	say("ui: aurora created");
+	psp5::Trace("ui: aurora created");
 
-	say("ui: Aurora Shelf at %dx%d", surface.width(), surface.height());
+	psp5::Trace("ui: Aurora Shelf at %dx%d", surface.width(), surface.height());
 
 	hui::InputTracker tracker;
 	hui::PadSample samples[64];
@@ -471,13 +472,13 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 			break;
 		}
 		if (frames == 0) {
-			say("ui: first frame presented");
+			psp5::Trace("ui: first frame presented");
 		}
 		frames++;
 		slot = (slot + 1) % surface.framesInFlight();
 	}
 
-	say("ui: leaving the home screen");
+	psp5::Trace("ui: leaving the home screen");
 	aurora.reset();
 	renderer.release();
 	surface.End();

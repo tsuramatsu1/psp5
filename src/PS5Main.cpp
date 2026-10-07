@@ -32,6 +32,7 @@
 #include "Core/System.h"
 
 #include "PS5Audio.h"
+#include "PS5Log.h"
 #include "PS5Paths.h"
 #include "PS5VulkanContext.h"
 #include "ui/PS5AuroraLauncher.h"
@@ -328,10 +329,11 @@ int main(int argc, char *argv[]) {
 	say("psp5 - PPSSPP %s on the PlayStation 5", PPSSPP_GIT_VERSION);
 
 	if (!PS5Paths::Prepare()) {
-		say("fatal: cannot create the memory stick under %s", PS5Paths::kRoot);
+		psp5::Trace("fatal: cannot create the memory stick under %s", PS5Paths::kRoot);
 		return 1;
 	}
 
+	psp5::OpenTrace();
 	PS5Paths::Probe();
 
 	if (!pad_open()) {
@@ -360,7 +362,7 @@ int main(int argc, char *argv[]) {
 	g_graphics = new PS5VulkanContext();
 	std::string error;
 	if (!g_graphics->InitDevice(&error)) {
-		say("fatal: graphics: %s", error.c_str());
+		psp5::Trace("fatal: graphics: %s", error.c_str());
 		delete g_graphics;
 		g_graphics = nullptr;
 		NativeShutdown();
@@ -387,7 +389,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (!g_graphics->InitDraw(&error)) {
-		say("fatal: graphics: %s", error.c_str());
+		psp5::Trace("fatal: graphics: %s", error.c_str());
 		g_graphics->Shutdown();
 		delete g_graphics;
 		g_graphics = nullptr;
@@ -396,7 +398,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (!NativeInitGraphics(g_graphics)) {
-		say("fatal: NativeInitGraphics failed");
+		psp5::Trace("fatal: NativeInitGraphics failed");
 		g_graphics->Shutdown();
 		delete g_graphics;
 		g_graphics = nullptr;
@@ -404,7 +406,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	say("running");
+	psp5::Trace("running");
 	while (!g_quit) {
 		PollInput();
 		NativeFrame(g_graphics);
