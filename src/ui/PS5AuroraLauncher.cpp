@@ -344,11 +344,15 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	volkLoadInstance((VkInstance)gpu.instance);
 	volkLoadDevice((VkDevice)gpu.device);
 
+	say("ui: volk loaded");
+
 	Surface surface;
 	if (!surface.Begin(gpu)) {
 		surface.End();
 		return false;
 	}
+
+	say("ui: surface ready, %d frames in flight", (int)surface.framesInFlight());
 
 	hui::gfx::VkRenderer renderer;
 	hui::gfx::VkRendererConfig config;
@@ -368,6 +372,8 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 
 	// The six faces the designs use. Without them nothing can be drawn, so a
 	// missing font is the one reason to give up and let PPSSPP's UI take over.
+	say("ui: renderer started");
+
 	hui::gfx::Font regular, semibold, display, mono, pixel, hand;
 	hui::ui::Fonts fonts;
 	if (!LoadFont(renderer, "inter-regular.huifont", &regular, &fonts.regular) ||
@@ -382,14 +388,18 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 		return false;
 	}
 
+	say("ui: fonts loaded");
+
 	hui::demo::Catalog catalog;
 	catalog.build_covers(renderer, fonts);
+	say("ui: covers built (%d items)", (int)catalog.size());
 
 	hui::Settings settings;
 	hui::app::Telemetry telemetry;
 	hui::app::Context context{fonts, catalog, telemetry, settings};
 	std::unique_ptr<hui::app::Concept> aurora = hui::concepts::make_aurora(context);
 	aurora->enter();
+	say("ui: aurora created");
 
 	say("ui: Aurora Shelf at %dx%d", surface.width(), surface.height());
 
@@ -398,6 +408,7 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	double previous = now_seconds();
 	double holding = 0.0;
 	uint32_t slot = 0;
+	uint64_t frames = 0;
 
 	for (;;) {
 		pad state{};
@@ -459,6 +470,10 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 		if (!surface.EndFrame(slot, imageIndex)) {
 			break;
 		}
+		if (frames == 0) {
+			say("ui: first frame presented");
+		}
+		frames++;
 		slot = (slot + 1) % surface.framesInFlight();
 	}
 
