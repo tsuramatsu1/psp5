@@ -79,6 +79,20 @@ bool PS5VulkanContext::InitDevice(std::string *errorMessage) {
 	// against a zero-sized display.
 	Native_UpdateScreenScale(g_display.pixel_xres, g_display.pixel_yres, 1.0f);
 
+	// The swapchain, here rather than in InitDraw, so the Aurora launcher has
+	// something to present to: it runs between the two halves, and a null
+	// swapchain took RADV's wsi_GetSwapchainImagesKHR straight through a null
+	// pointer on the first console run.
+	//
+	// FIFO because it is the only mode the console offers (klog: "Supported
+	// present modes: FIFO"), which is what ConfigPresentModeToVulkan settles on
+	// too - so InitDraw's own call is a rebuild with the same mode, not a change.
+	if (!vulkan_->InitSwapchain(VK_PRESENT_MODE_FIFO_KHR)) {
+		*errorMessage = vulkan_->InitError();
+		Shutdown();
+		return false;
+	}
+
 	return true;
 }
 
@@ -89,6 +103,9 @@ bool PS5VulkanContext::InitDraw(std::string *errorMessage) {
 	}
 	draw_ = Draw::T3DCreateVulkanContext(vulkan_, useMultiThreading);
 
+	// The launcher presented to the swapchain InitDevice made. Replace it now that
+	// draw_ can say which present mode the configuration wants.
+	vulkan_->DestroySwapchain();
 	if (!vulkan_->InitSwapchain(ConfigPresentModeToVulkan(draw_))) {
 		*errorMessage = vulkan_->InitError();
 		Shutdown();
