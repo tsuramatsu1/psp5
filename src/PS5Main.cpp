@@ -34,6 +34,7 @@
 #include "PS5Audio.h"
 #include "PS5Paths.h"
 #include "PS5VulkanContext.h"
+#include "ui/PS5AuroraLauncher.h"
 #include "platform/platform.h"
 
 namespace {
@@ -358,8 +359,36 @@ int main(int argc, char *argv[]) {
 
 	g_graphics = new PS5VulkanContext();
 	std::string error;
-	if (!g_graphics->Init(&error)) {
+	if (!g_graphics->InitDevice(&error)) {
 		say("fatal: graphics: %s", error.c_str());
+		delete g_graphics;
+		g_graphics = nullptr;
+		NativeShutdown();
+		return 1;
+	}
+
+	// The home screen, before PPSSPP's render manager exists: the kit and the
+	// render manager each assume they own the frame loop, so they take turns. The
+	// launcher gives the device back exactly as it found it; if it cannot start,
+	// the title simply goes on to PPSSPP's own interface.
+	{
+		VulkanContext *vk = g_graphics->vulkan();
+		psp5::AuroraDevice gpu;
+		gpu.instance = (std::uint64_t)vk->GetInstance();
+		gpu.physicalDevice = (std::uint64_t)vk->GetCurrentPhysicalDevice();
+		gpu.device = (std::uint64_t)vk->GetDevice();
+		gpu.queue = (std::uint64_t)vk->GetGraphicsQueue();
+		gpu.swapchain = (std::uint64_t)vk->GetSwapchain();
+		gpu.queueFamily = (std::uint32_t)vk->GetGraphicsQueueFamilyIndex();
+		gpu.swapchainFormat = (std::uint32_t)vk->GetSwapchainFormat();
+		gpu.width = vk->GetBackbufferWidth();
+		gpu.height = vk->GetBackbufferHeight();
+		psp5::RunAuroraLauncher(gpu);
+	}
+
+	if (!g_graphics->InitDraw(&error)) {
+		say("fatal: graphics: %s", error.c_str());
+		g_graphics->Shutdown();
 		delete g_graphics;
 		g_graphics = nullptr;
 		NativeShutdown();

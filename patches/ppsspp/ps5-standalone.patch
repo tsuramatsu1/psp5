@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e18a1387..6f814a15a 100644
+index 8e18a1387..65a114bc1 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1506,6 +1506,21 @@ elseif(WIN32)
@@ -24,7 +24,7 @@ index 8e18a1387..6f814a15a 100644
  else()
  	if(GOLD)
  		set(TargetBin PPSSPPGold)
-@@ -3031,6 +3046,49 @@ if(LIBRETRO)
+@@ -3031,6 +3046,57 @@ if(LIBRETRO)
  	add_subdirectory(libretro)
  endif()
  
@@ -60,13 +60,21 @@ index 8e18a1387..6f814a15a 100644
 +		list(FILTER psp5_kit_sources EXCLUDE REGEX "/src/gfx/(gl_[a-z_]+|backdrop|canvas)\.cpp$")
 +		# Third-party code inside the kit, built as it stands.
 +		set_source_files_properties(${psp5_kit_sources} PROPERTIES COMPILE_OPTIONS "-w")
++		# volk supplies the vkXxx entry points as function pointers. The kit calls
++		# them directly, and there is no libvulkan to link on the console - RADV is
++		# an archive reached through one symbol - so without this every Vulkan call
++		# in the kit is an undefined symbol at link time.
 +		add_library(psp5_ui STATIC
 +			${psp5_kit_sources}
++			${PSP5_SRC_DIR}/ui/volk/volk.c
 +			${PSP5_SRC_DIR}/ui/HuiPlatform.cpp
++			${PSP5_SRC_DIR}/ui/PS5AuroraLauncher.cpp
 +		)
-+		target_include_directories(psp5_ui PUBLIC ${PSP5_UI_KIT}/src ${PSP5_SRC_DIR})
++		target_include_directories(psp5_ui PUBLIC ${PSP5_UI_KIT}/src ${PSP5_SRC_DIR}
++			${PSP5_SRC_DIR}/ui/volk)
 +		target_compile_features(psp5_ui PUBLIC cxx_std_20)
-+		target_compile_definitions(psp5_ui PUBLIC PS5_UI)
++		target_compile_definitions(psp5_ui PUBLIC PS5_UI VK_NO_PROTOTYPES)
++		target_compile_options(psp5_ui PRIVATE -include volk.h)
 +		target_link_libraries(psp5_platform psp5_ui)
 +	endif()
 +endif()

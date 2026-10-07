@@ -180,6 +180,20 @@ assets="$source_dir/assets"
 [[ -d $assets ]] || { echo "error: no PPSSPP asset tree to stage" >&2; exit 2; }
 cp -a -- "$assets" "$app/assets"
 
+# The UI kit's fonts, which the Aurora Shelf launcher loads from /app0/ui/fonts.
+# Without them the launcher cannot draw and the title falls back to PPSSPP's own
+# interface, which is a working title but not the one that was asked for.
+kit=${PSP5_UI_KIT:-$root/.deps/hui}
+if [[ -d $kit/assets/fonts ]]; then
+	mkdir -p "$app/ui"
+	rm -rf -- "$app/ui/fonts"
+	cp -a -- "$kit/assets/fonts" "$app/ui/fonts"
+	printf '==> staged %s kit fonts
+' "$(find "$app/ui/fonts" -type f | wc -l)"
+else
+	echo "==> no kit fonts at $kit/assets/fonts; the launcher will not start"
+fi
+
 # Everything a title creates must be reachable over FTP, which runs as another
 # process: folders 0777, files 0666, whatever the umask gave.
 find "$app" -type d -exec chmod 0777 {} +

@@ -22,6 +22,14 @@ public:
 
 	bool Init(std::string *errorMessage);
 
+	// Init in two halves, so something else can use the device and swapchain
+	// before PPSSPP's render manager exists and takes ownership of the frame.
+	// The Aurora launcher runs between them.
+	bool InitDevice(std::string *errorMessage);
+	bool InitDraw(std::string *errorMessage);
+
+	VulkanContext *vulkan() const { return vulkan_; }
+
 	void Shutdown() override;
 	void Resize() override;
 	void Poll() override;

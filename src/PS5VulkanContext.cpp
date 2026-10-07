@@ -17,6 +17,10 @@
 #include "platform/platform.h"
 
 bool PS5VulkanContext::Init(std::string *errorMessage) {
+	return InitDevice(errorMessage) && InitDraw(errorMessage);
+}
+
+bool PS5VulkanContext::InitDevice(std::string *errorMessage) {
 	init_glslang();
 
 	// The console has no message box and no debugger attached to break into, and a
@@ -75,6 +79,10 @@ bool PS5VulkanContext::Init(std::string *errorMessage) {
 	// against a zero-sized display.
 	Native_UpdateScreenScale(g_display.pixel_xres, g_display.pixel_yres, 1.0f);
 
+	return true;
+}
+
+bool PS5VulkanContext::InitDraw(std::string *errorMessage) {
 	bool useMultiThreading = g_Config.bRenderMultiThreading;
 	if (g_Config.iInflightFrames == 1) {
 		useMultiThreading = false;
