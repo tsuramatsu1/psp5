@@ -333,18 +333,22 @@ int GatherInput(hui::PadSample *samples, int capacity) {
 }  // namespace
 
 bool RunAuroraLauncher(const AuroraDevice &gpu) {
+	// Before anything calls a vkXxx, including Surface::Begin below: every entry
+	// point in this file and in the kit is a volk pointer, and an uninitialised one
+	// is null. Calling it jumps to address 0, which is exactly what the first
+	// console run did - SIGSEGV with rip 0 and the fault address equal to it.
+	//
+	// RADV is linked in as an archive and reached through its own
+	// GetInstanceProcAddr, which is what volk is aimed at.
+	volkInitializeCustom((PFN_vkGetInstanceProcAddr)radv_GetInstanceProcAddr);
+	volkLoadInstance((VkInstance)gpu.instance);
+	volkLoadDevice((VkDevice)gpu.device);
+
 	Surface surface;
 	if (!surface.Begin(gpu)) {
 		surface.End();
 		return false;
 	}
-
-	// The kit calls the Vulkan entry points directly, so they have to exist as
-	// pointers first. RADV is linked in as an archive and reached through its own
-	// GetInstanceProcAddr, which is what volk is pointed at here.
-	volkInitializeCustom((PFN_vkGetInstanceProcAddr)radv_GetInstanceProcAddr);
-	volkLoadInstance((VkInstance)gpu.instance);
-	volkLoadDevice((VkDevice)gpu.device);
 
 	hui::gfx::VkRenderer renderer;
 	hui::gfx::VkRendererConfig config;
