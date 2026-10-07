@@ -327,6 +327,12 @@ int GatherInput(hui::PadSample *samples, int capacity) {
 		sample.right_y = readings[i].right_y;
 		sample.l2 = readings[i].l2;
 		sample.r2 = readings[i].r2;
+		// Both of these matter and both were missed at first: with connected
+		// false the tracker treats the pad as absent and reports focus_lost, so
+		// nothing responds, and with no timestamp it cannot tell a tap from a
+		// hold or time a repeat.
+		sample.connected = readings[i].connected;
+		sample.timestamp_us = readings[i].timestamp_us;
 	}
 	return used;
 }
