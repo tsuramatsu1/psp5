@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e18a1387..9f2b6077b 100644
+index 8e18a1387..6f814a15a 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1506,6 +1506,21 @@ elseif(WIN32)
@@ -24,7 +24,7 @@ index 8e18a1387..9f2b6077b 100644
  else()
  	if(GOLD)
  		set(TargetBin PPSSPPGold)
-@@ -3031,6 +3046,28 @@ if(LIBRETRO)
+@@ -3031,6 +3046,49 @@ if(LIBRETRO)
  	add_subdirectory(libretro)
  endif()
  
@@ -48,6 +48,27 @@ index 8e18a1387..9f2b6077b 100644
 +		${PSP5_SRC_DIR}/platform/platform.c
 +	)
 +	target_link_libraries(psp5_platform psp5_app)
++
++	# The Aurora Shelf launcher, from PS5_VKHomebrewUI's kit (tools/setup-kit.sh).
++	# Optional: without PSP5_UI_KIT the title is PPSSPP's own UI alone.
++	if(PSP5_UI_KIT)
++		file(GLOB_RECURSE psp5_kit_sources ${PSP5_UI_KIT}/src/*.cpp ${PSP5_UI_KIT}/src/*.c)
++		# Not the kit's own console entry point, platform layer or heap - psp5 brings
++		# up the console itself. Not its OpenGL backend either: there is no GL here,
++		# and those files want GL/glcorearb.h.
++		list(FILTER psp5_kit_sources EXCLUDE REGEX "/src/(main\.cpp|platform/|runtime/)")
++		list(FILTER psp5_kit_sources EXCLUDE REGEX "/src/gfx/(gl_[a-z_]+|backdrop|canvas)\.cpp$")
++		# Third-party code inside the kit, built as it stands.
++		set_source_files_properties(${psp5_kit_sources} PROPERTIES COMPILE_OPTIONS "-w")
++		add_library(psp5_ui STATIC
++			${psp5_kit_sources}
++			${PSP5_SRC_DIR}/ui/HuiPlatform.cpp
++		)
++		target_include_directories(psp5_ui PUBLIC ${PSP5_UI_KIT}/src ${PSP5_SRC_DIR})
++		target_compile_features(psp5_ui PUBLIC cxx_std_20)
++		target_compile_definitions(psp5_ui PUBLIC PS5_UI)
++		target_link_libraries(psp5_platform psp5_ui)
++	endif()
 +endif()
 +
  if(TargetBin)

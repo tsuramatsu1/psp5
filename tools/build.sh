@@ -103,6 +103,17 @@ if [[ -n ${PSP5_FFMPEG_PREFIX:-} ]]; then
 	ffmpeg_args=(-DUSE_FFMPEG=ON -DUSE_SYSTEM_FFMPEG=OFF -DFFMPEG_DIR="$PSP5_FFMPEG_PREFIX")
 fi
 
+# The Aurora Shelf launcher's UI kit. PSP5_NO_UI=1 builds without it, leaving
+# PPSSPP's own interface as the only one.
+ui_args=()
+if [[ -z ${PSP5_NO_UI:-} ]]; then
+	ui_kit=$("$root/tools/setup-kit.sh")
+	[[ -f $ui_kit/src/gfx/vk/vk_renderer.cpp ]] ||
+		{ echo "error: tools/setup-kit.sh did not export the pinned kit" >&2; exit 2; }
+	ui_args=(-DPSP5_UI_KIT="$ui_kit")
+	echo "==> UI kit: $ui_kit"
+fi
+
 echo "==> configuring"
 cmake -S "$source_dir" -B "$build_dir" -G Ninja \
 	-DCMAKE_TOOLCHAIN_FILE="$root/tooling/ps5-toolchain.cmake" \
@@ -114,7 +125,7 @@ cmake -S "$source_dir" -B "$build_dir" -G Ninja \
 	-DUSE_SYSTEM_FREETYPE=OFF \
 	-DUSING_GLES2=OFF -DUSE_WAYLAND_WSI=OFF -DUSING_X11_VULKAN=OFF \
 	-DUSE_VULKAN_DISPLAY_KHR=ON \
-	"${ffmpeg_args[@]}"
+	"${ffmpeg_args[@]}" ${ui_args[@]+"${ui_args[@]}"}
 
 echo "==> building"
 cmake --build "$build_dir" --parallel "${JOBS:-$(nproc)}"
