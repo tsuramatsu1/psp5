@@ -226,6 +226,12 @@ if [[ -n ${PSP5_DIST_MIRROR:-} ]]; then
 	mkdir -p "$mirror/sce_sys" "$mirror/sce_module"
 	cp -a -- "$app/sce_sys/." "$mirror/sce_sys/"
 	cp -a -- "$app/sce_module/." "$mirror/sce_module/"
+	# The kit's fonts, without which the launcher will not start. Small and they
+	# change only with the kit's pin, so they are copied whenever they exist.
+	if [[ -d $app/ui ]]; then
+		rm -rf -- "$mirror/ui"
+		cp -a -- "$app/ui" "$mirror/ui"
+	fi
 	cp -a -- "$app/eboot.bin" "$mirror/.eboot.bin.new"
 	mv -- "$mirror/.eboot.bin.new" "$mirror/eboot.bin"
 	printf '==> mirrored the eboot%s to %s\n' "${mirrored_assets:-}" "$mirror"
