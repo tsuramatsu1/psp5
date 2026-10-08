@@ -25,6 +25,7 @@
 #include "PS5Log.h"
 #include "PS5Paths.h"
 #include "ui/PS5GameArt.h"
+#include "ui/PS5Settings.h"
 
 #include "gfx/backdrop_spec.hpp"
 #include "gfx/draw_list.hpp"
@@ -452,11 +453,25 @@ void GameLibrary::BuildOrders() {
 		all[static_cast<std::size_t>(i)] = i;
 	}
 
+	// Recent means recently played, and then recently added: the game just put
+	// down is the one most likely to be picked up again, ahead of a file that
+	// was only copied across. A game that has never been played has no time of
+	// its own, so it falls back to the file's - which is what the whole view
+	// used to be sorted by, and why playing a game left it where it was.
 	std::vector<int> &recent = order_[static_cast<std::size_t>(GameView::recent)];
 	recent = all;
 	std::stable_sort(recent.begin(), recent.end(), [this](int a, int b) {
-		return entries_[static_cast<std::size_t>(a)].mtime >
-		       entries_[static_cast<std::size_t>(b)].mtime;
+		const GameEntry &left = entries_[static_cast<std::size_t>(a)];
+		const GameEntry &right = entries_[static_cast<std::size_t>(b)];
+		const std::uint64_t lp = psp5::LastPlayed(left.disc_id);
+		const std::uint64_t rp = psp5::LastPlayed(right.disc_id);
+		if ((lp != 0) != (rp != 0)) {
+			return lp != 0;  // anything played outranks anything not
+		}
+		if (lp != rp) {
+			return lp > rp;
+		}
+		return left.mtime > right.mtime;
 	});
 
 	std::vector<int> &alpha = order_[static_cast<std::size_t>(GameView::alphabetical)];

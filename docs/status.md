@@ -23,12 +23,9 @@ Last reviewed: 2026-10-08.
 | The in-game menu | **L2 + R2** - cheats, save states, exit |
 | Hours played | PPSSPP's own time tracker, per disc id |
 | Typing | psp5's own keyboard, with the console's shortcuts: Square deletes, Triangle spaces, L1/R1 move the cursor, L2 shifts, R2 is done |
-
-## Not done
-
-| | |
-| --- | --- |
-| Texture replacement | `bReplaceTextures` / `bSaveNewTextures` and `memstick/PSP/TEXTURES/<GAMEID>/` |
+| Texture replacement | a pack from `PSP/TEXTURES/<DISC_ID>/`, and dumping to `new/` to build one |
+| Settings | paged - Picture, Sound, System - on **L1 / R1** |
+| Recent | ordered by when a game was last played, then by when its file arrived |
 
 ## Rough edges
 

@@ -280,7 +280,7 @@ index 4542b9e7e..0098912cf 100644
  
  	void setUIContext(UIContext *context) { uiContext_ = context; }
 diff --git a/Core/Config.cpp b/Core/Config.cpp
-index e7fd30d52..951dcec36 100644
+index e7fd30d52..aa12d916d 100644
 --- a/Core/Config.cpp
 +++ b/Core/Config.cpp
 @@ -468,6 +468,16 @@ const char * const vulkanDefaultBlacklist[] = {
@@ -308,6 +308,32 @@ index e7fd30d52..951dcec36 100644
  }
  
  int Config::NextValidBackend() {
+@@ -2072,6 +2083,11 @@ void PlayTimeTracker::Save(Section *section) {
+ 	}
+ }
+ 
++uint64_t PlayTimeTracker::GetLastPlayed(std::string_view gameId) const {
++	auto iter = tracker_.find(gameId);
++	return iter == tracker_.end() ? 0 : iter->second.lastTimePlayed;
++}
++
+ bool PlayTimeTracker::GetPlayedTimeString(std::string_view gameId, std::string *str) const {
+ 	auto ga = GetI18NCategory(I18NCat::GAME);
+ 
+diff --git a/Core/Config.h b/Core/Config.h
+index 87f9f4d4d..742866b8d 100644
+--- a/Core/Config.h
++++ b/Core/Config.h
+@@ -59,6 +59,9 @@ class PlayTimeTracker {
+ 	void Save(Section *section);
+ 
+ 	bool GetPlayedTimeString(std::string_view, std::string *str) const;
++	// psp5: when this game was last started, as a UTC Unix time, or 0 for a game
++	// that has never been played.
++	uint64_t GetLastPlayed(std::string_view gameId) const;
+ 
+ private:
+ 	std::map<std::string, PlayTime, std::less<>> tracker_;
 diff --git a/Core/CwCheat.cpp b/Core/CwCheat.cpp
 index 597ea5d4e..208b129a1 100644
 --- a/Core/CwCheat.cpp
@@ -432,7 +458,7 @@ index 63f1ed8ac..cb0e2e526 100644
  	std::lock_guard<std::mutex> lock(mutex_);
  
 diff --git a/UI/EmuScreen.cpp b/UI/EmuScreen.cpp
-index b29484204..5640cfbd8 100644
+index b29484204..5a6fd0e8b 100644
 --- a/UI/EmuScreen.cpp
 +++ b/UI/EmuScreen.cpp
 @@ -1,5 +1,15 @@
@@ -451,7 +477,7 @@ index b29484204..5640cfbd8 100644
  // This program is free software: you can redistribute it and/or modify
  // it under the terms of the GNU General Public License as published by
  // the Free Software Foundation, version 2.0 or later versions.
-@@ -363,6 +373,23 @@ void EmuScreen::bootComplete() {
+@@ -363,6 +373,28 @@ void EmuScreen::bootComplete() {
  	}, (void *)this);
  
  	// Initialize retroachievements, now that we're on the right thread.
@@ -471,11 +497,16 @@ index b29484204..5640cfbd8 100644
 +	// game's ini has just overwritten whatever psp5 set at start-up.
 +	g_Config.bReplaceTextures = PS5_ReplaceTextures();
 +	g_Config.bSaveNewTextures = PS5_SaveNewTextures();
++	// The texture cache read both of these when it was built, which was during
++	// PSP_Init - before this runs. Without telling it, the setting was correct in
++	// memory and the replacer still had the game ini's answer, so dumping stayed
++	// off however it was switched.
++	System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
 +#endif
  	if (g_Config.bAchievementsEnable) {
  		std::string errorString;
  		Achievements::SetGame(PSP_CoreParameter().fileToStart, PSP_CoreParameter().fileType, PSP_LoadedFile());
-@@ -389,8 +416,11 @@ void EmuScreen::bootComplete() {
+@@ -389,8 +421,11 @@ void EmuScreen::bootComplete() {
  	System_Notify(SystemNotification::DISASSEMBLY);
  
  	NOTICE_LOG(Log::Boot, "Booted %s...", PSP_CoreParameter().fileToStart.c_str());
@@ -489,7 +520,7 @@ index b29484204..5640cfbd8 100644
  		AutoLoadSaveState();
  	}
  
-@@ -1486,7 +1516,9 @@ void EmuScreen::update() {
+@@ -1486,7 +1521,9 @@ void EmuScreen::update() {
  
  	if (pauseTrigger_) {
  		pauseTrigger_ = false;
@@ -499,7 +530,7 @@ index b29484204..5640cfbd8 100644
  	}
  
  	if (!PSP_IsInited())
-@@ -1933,6 +1965,11 @@ void EmuScreen::runImDebugger() {
+@@ -1933,6 +1970,11 @@ void EmuScreen::runImDebugger() {
  	}
  }
  
@@ -511,7 +542,7 @@ index b29484204..5640cfbd8 100644
  void EmuScreen::renderImDebugger() {
  	if (g_Config.bShowImDebugger) {
  		Draw::DrawContext *draw = screenManager()->getDrawContext();
-@@ -1943,6 +1980,13 @@ void EmuScreen::renderImDebugger() {
+@@ -1943,6 +1985,13 @@ void EmuScreen::renderImDebugger() {
  }
  
  bool EmuScreen::hasVisibleUI() {
@@ -525,7 +556,7 @@ index b29484204..5640cfbd8 100644
  	// Regular but uncommon UI.
  	if (saveStatePreview_->GetVisibility() != UI::V_GONE || loadingSpinner_->GetVisibility() == UI::V_VISIBLE)
  		return true;
-@@ -1988,6 +2032,13 @@ void EmuScreen::renderUI() {
+@@ -1988,6 +2037,13 @@ void EmuScreen::renderUI() {
  		}
  	}
  
@@ -539,7 +570,7 @@ index b29484204..5640cfbd8 100644
  #ifdef USE_PROFILER
  	if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::FRAME_PROFILE && PSP_IsInited()) {
  		DrawProfile(*ctx);
-@@ -2037,6 +2088,20 @@ void EmuScreen::AutoLoadSaveState() {
+@@ -2037,6 +2093,20 @@ void EmuScreen::AutoLoadSaveState() {
  
  	std::string gamePrefix = SaveState::GetGamePrefix(g_paramSFO);
  

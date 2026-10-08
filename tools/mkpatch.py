@@ -772,6 +772,11 @@ new = """	// Initialize retroachievements, now that we're on the right thread.
 	// game's ini has just overwritten whatever psp5 set at start-up.
 	g_Config.bReplaceTextures = PS5_ReplaceTextures();
 	g_Config.bSaveNewTextures = PS5_SaveNewTextures();
+	// The texture cache read both of these when it was built, which was during
+	// PSP_Init - before this runs. Without telling it, the setting was correct in
+	// memory and the replacer still had the game ini's answer, so dumping stayed
+	// off however it was switched.
+	System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
 #endif
 	if (g_Config.bAchievementsEnable) {"""
 assert t.count(old) == 1, "achievements boot anchor"
@@ -904,6 +909,34 @@ new = """	uint32_t orig_address = address;
 
 	if (!Memory::IsValidRange(address, num_bytes)) {"""
 assert t.count(old) == 1, "read_memory anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# PPSSPP's play-time tracker already keeps the moment each game was last
+# started - it is what its own game list sorts by - but the map is private and
+# nothing reads it back. psp5's Recent view wants exactly that, so rather than
+# keeping a second copy of the same fact, this exposes the one PPSSPP has.
+p = D / 'Core/Config.h'
+t = p.read_text()
+old = """	bool GetPlayedTimeString(std::string_view, std::string *str) const;"""
+new = """	bool GetPlayedTimeString(std::string_view, std::string *str) const;
+	// psp5: when this game was last started, as a UTC Unix time, or 0 for a game
+	// that has never been played.
+	uint64_t GetLastPlayed(std::string_view gameId) const;"""
+assert t.count(old) == 1, "tracker header anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+p = D / 'Core/Config.cpp'
+t = p.read_text()
+old = """bool PlayTimeTracker::GetPlayedTimeString(std::string_view gameId, std::string *str) const {"""
+new = """uint64_t PlayTimeTracker::GetLastPlayed(std::string_view gameId) const {
+	auto iter = tracker_.find(gameId);
+	return iter == tracker_.end() ? 0 : iter->second.lastTimePlayed;
+}
+
+bool PlayTimeTracker::GetPlayedTimeString(std::string_view gameId, std::string *str) const {"""
+assert t.count(old) == 1, "tracker body anchor"
 t = t.replace(old, new, 1)
 write(p, t)
 

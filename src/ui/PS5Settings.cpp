@@ -200,6 +200,13 @@ std::string PlayedTime(const std::string &discId) {
 // nothing is added to it: a label in front of it said the same thing twice, and
 // the middle dot that separated them is not in the kit's font atlas - which has
 // about 113 glyphs - so it drew as a question mark.
+std::uint64_t LastPlayed(const std::string &discId) {
+	if (discId.empty()) {
+		return 0;
+	}
+	return g_Config.TimeTracker().GetLastPlayed(discId);
+}
+
 std::string PlayedLabel(const std::string &discId) {
 	const std::string played = PlayedTime(discId);
 	return played.empty() ? std::string("Not played yet") : played;
