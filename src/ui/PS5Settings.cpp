@@ -78,12 +78,29 @@ constexpr Choice kFiltering[] = {
 constexpr Choice kAnisotropy[] = {
     {0, "Off"}, {1, "2x"}, {2, "4x"}, {3, "8x"}, {4, "16x"},
 };
+constexpr Choice kUpscale[] = {
+    {1, "Off"}, {2, "2x"}, {3, "3x"}, {4, "4x"}, {5, "5x"},
+};
+constexpr Choice kUpscaleType[] = {
+    {0, "xBRZ"}, {1, "Hybrid"}, {2, "Bicubic"}, {3, "Hybrid + Bicubic"},
+};
+constexpr Choice kMultiSample[] = {
+    {0, "Off"}, {1, "2x"}, {2, "4x"}, {3, "8x"}, {4, "16x"},
+};
 constexpr Choice kFrameSkip[] = {
     {0, "Off"}, {1, "1 frame"}, {2, "2 frames"}, {3, "3 frames"}, {4, "4 frames"},
 };
 constexpr Choice kOnOff[] = {{0, "Off"}, {1, "On"}};
 
 }  // namespace
+
+const char *settingCategoryName(SettingCategory category) {
+	switch (category) {
+		case SettingCategory::audio: return "Sound";
+		case SettingCategory::system: return "System";
+		default: return "Picture";
+	}
+}
 
 Settings &SettingsPanel() {
 	static Settings panel;
@@ -319,49 +336,109 @@ void AchievementsLogout() {
 void Settings::Rebuild() {
 	items_.clear();
 
-	items_.push_back({"Rendering resolution",
+	// ---- Picture ----
+	items_.push_back({SettingKey::resolution, SettingCategory::graphics, "Rendering resolution",
 	                  NameOf(kResolutions, g_Config.iInternalResolution, "%dx"),
 	                  "How much sharper than a PSP the picture is drawn."});
 
-	items_.push_back({"Texture filtering", NameOf(kFiltering, g_Config.iTexFiltering, "%d"),
+	items_.push_back({SettingKey::filtering, SettingCategory::graphics, "Texture filtering",
+	                  NameOf(kFiltering, g_Config.iTexFiltering, "%d"),
 	                  "Nearest keeps the original pixels; linear smooths them."});
 
-	items_.push_back({"Anisotropic filtering", NameOf(kAnisotropy, g_Config.iAnisotropyLevel, "%d"),
+	items_.push_back({SettingKey::anisotropy, SettingCategory::graphics, "Anisotropic filtering",
+	                  NameOf(kAnisotropy, g_Config.iAnisotropyLevel, "%d"),
 	                  "Sharpens textures seen at a steep angle, like roads and floors."});
 
-	items_.push_back({"Vertical sync", g_Config.bVSync ? "On" : "Off",
+	items_.push_back({SettingKey::upscale, SettingCategory::graphics, "Texture upscaling",
+	                  NameOf(kUpscale, g_Config.iTexScalingLevel, "%dx"),
+	                  "Redraws the game's textures larger, on the CPU. Costly."});
+
+	items_.push_back({SettingKey::upscaleType, SettingCategory::graphics, "Upscaling method",
+	                  NameOf(kUpscaleType, g_Config.iTexScalingType, "%d"),
+	                  "xBRZ keeps edges crisp; bicubic is softer and cheaper."});
+
+	items_.push_back({SettingKey::deposterize, SettingCategory::graphics, "Deposterize",
+	                  g_Config.bTexDeposterize ? "On" : "Off",
+	                  "Smooths the banding upscaling can leave in a gradient."});
+
+	items_.push_back({SettingKey::antialiasing, SettingCategory::graphics, "Antialiasing",
+	                  NameOf(kMultiSample, g_Config.iMultiSampleLevel, "%d"),
+	                  "Softens jagged edges. Off when buffer effects are skipped."});
+
+	items_.push_back({SettingKey::smart2d, SettingCategory::graphics, "Smart 2D texture filtering",
+	                  g_Config.bSmart2DTexFiltering ? "On" : "Off",
+	                  "Leaves flat 2D art alone so menus and text stay sharp."});
+
+	items_.push_back({SettingKey::crop16x9, SettingCategory::graphics, "Crop to 16:9",
+	                  g_Config.bDisplayCropTo16x9 ? "On" : "Off",
+	                  "Trims a sliver off the top and bottom to fill a widescreen."});
+
+	items_.push_back({SettingKey::vsync, SettingCategory::graphics, "Vertical sync",
+	                  g_Config.bVSync ? "On" : "Off",
 	                  "On removes tearing; off lets frames arrive as soon as they are drawn."});
 
-	items_.push_back({"Frame skipping",
+	items_.push_back({SettingKey::frameskip, SettingCategory::graphics, "Frame skipping",
 	                  g_Config.bAutoFrameSkip ? std::string("Automatic")
 	                                          : NameOf(kFrameSkip, g_Config.iFrameSkip, "%d"),
 	                  "Drops frames to keep a heavy game at speed. Off looks best."});
 
-	items_.push_back({"Sound", g_Config.bEnableSound ? "On" : "Off", "Audio from the emulator."});
-
-	items_.push_back({"Game volume", Format("%d", g_Config.iGameVolume),
-	                  "0 to 100, in steps of five."});
-
-	items_.push_back({"Menu sounds", prefs::soundSetLabel(prefs::soundSet()),
-	                  "The home screen's own sounds. A game's music is separate."});
-
-	items_.push_back({"Show frame rate",
+	items_.push_back({SettingKey::frameRate, SettingCategory::graphics, "Show frame rate",
 	                  (g_Config.iShowStatusFlags & (int)ShowStatusFlags::FPS_COUNTER) ? "On" : "Off",
 	                  "Draws the frame rate over the game."});
 
-	items_.push_back({"Fast-forward speed",
+	items_.push_back({SettingKey::hardwareTransform, SettingCategory::graphics, "Hardware transform",
+	                  g_Config.bHardwareTransform ? "On" : "Off",
+	                  "Transforms geometry on the GPU. Off is slower and more accurate."});
+
+	items_.push_back({SettingKey::softwareSkinning, SettingCategory::graphics, "Software skinning",
+	                  g_Config.bSoftwareSkinning ? "On" : "Off",
+	                  "Animates characters on the CPU. Faster in most games."});
+
+	items_.push_back({SettingKey::lazyTextures, SettingCategory::graphics, "Lazy texture caching",
+	                  g_Config.bTextureBackoffCache ? "On" : "Off",
+	                  "Rechecks textures less often. Faster, and wrong in a few games."});
+
+	items_.push_back({SettingKey::skipBufferEffects, SettingCategory::graphics, "Skip buffer effects",
+	                  g_Config.bSkipBufferEffects ? "On" : "Off",
+	                  "Much faster, and drops the effects some games draw off-screen."});
+
+	// ---- Sound ----
+	items_.push_back({SettingKey::sound, SettingCategory::audio, "Sound", g_Config.bEnableSound ? "On" : "Off",
+	                  "Audio from the emulator."});
+
+	items_.push_back({SettingKey::volume, SettingCategory::audio, "Game volume",
+	                  Format("%d", g_Config.iGameVolume), "0 to 100, in steps of five."});
+
+	if (!scopedToGame()) {
+		items_.push_back({SettingKey::menuSounds, SettingCategory::audio, "Menu sounds",
+		                  prefs::soundSetLabel(prefs::soundSet()),
+		                  "The home screen's own sounds. A game's music is separate."});
+	}
+
+	// ---- System ----
+	items_.push_back({SettingKey::fastForward, SettingCategory::system, "Fast-forward speed",
 	                  g_Config.iAnalogFpsLimit <= 0 ? std::string("Unlimited")
 	                                                : Format("%d%%", g_Config.iAnalogFpsLimit),
 	                  "How fast the game runs while the right trigger is held."});
 
-	items_.push_back({"Achievements hardcore mode", prefs::hardcore() ? "On" : "Off",
-	                  "On earns hardcore unlocks but turns off save states entirely."});
+	// psp5's own settings, and psp5 keeps one of each for the whole title - it
+	// has nowhere to put a second. Shown only in the title's panel: in a game's
+	// they looked per-game and were not, so changing one there changed it
+	// everywhere, which is exactly what it appeared not to do.
+	if (!scopedToGame()) {
+		items_.push_back({SettingKey::hardcore, SettingCategory::system, "Achievements hardcore mode",
+		                  prefs::hardcore() ? "On" : "Off",
+		                  "On earns hardcore unlocks but turns off save states entirely."});
 
-	items_.push_back({"Texture replacement", prefs::replaceTextures() ? "On" : "Off",
-	                  "Uses a pack from PSP/TEXTURES/<GAMEID>/ when a game has one."});
+		items_.push_back({SettingKey::replaceTextures, SettingCategory::system, "Texture replacement",
+		                  prefs::replaceTextures() ? "On" : "Off",
+		                  "Uses a pack from PSP/TEXTURES/<GAMEID>/ when a game has one."});
 
-	items_.push_back({"Save new textures", prefs::saveNewTextures() ? "On" : "Off",
-	                  "Writes what a game draws to PSP/TEXTURES/<GAMEID>/new/, to build a pack."});
+		items_.push_back({SettingKey::saveNewTextures, SettingCategory::system, "Save new textures",
+		                  prefs::saveNewTextures() ? "On" : "Off",
+		                  "Writes what a game draws to PSP/TEXTURES/<GAMEID>/new/, to build "
+		                  "a pack."});
+	}
 }
 
 void Settings::Reload() {
@@ -431,25 +508,47 @@ bool Settings::Adjust(std::size_t index, int delta) {
 		return false;
 	}
 
-	switch (index) {
-		case 0:
+	// On the key, not the position: the pages hold different rows and a game's
+	// panel leaves four out, so where a row sits says nothing about what it is.
+	switch (items_[index].key) {
+		case SettingKey::resolution:
 			g_Config.iInternalResolution =
 			    StepThrough(kResolutions, g_Config.iInternalResolution, delta);
 			break;
-		case 1:
+		case SettingKey::filtering:
 			g_Config.iTexFiltering = StepThrough(kFiltering, g_Config.iTexFiltering, delta);
 			break;
-		case 2:
+		case SettingKey::anisotropy:
 			g_Config.iAnisotropyLevel = StepThrough(kAnisotropy, g_Config.iAnisotropyLevel, delta);
 			break;
-		case 3:
+		case SettingKey::upscale:
+			g_Config.iTexScalingLevel = StepThrough(kUpscale, g_Config.iTexScalingLevel, delta);
+			break;
+		case SettingKey::upscaleType:
+			g_Config.iTexScalingType = StepThrough(kUpscaleType, g_Config.iTexScalingType, delta);
+			break;
+		case SettingKey::deposterize:
+			g_Config.bTexDeposterize = !g_Config.bTexDeposterize;
+			break;
+		case SettingKey::antialiasing:
+			g_Config.iMultiSampleLevel =
+			    StepThrough(kMultiSample, g_Config.iMultiSampleLevel, delta);
+			break;
+		case SettingKey::smart2d:
+			g_Config.bSmart2DTexFiltering = !g_Config.bSmart2DTexFiltering;
+			break;
+		case SettingKey::crop16x9:
+			g_Config.bDisplayCropTo16x9 = !g_Config.bDisplayCropTo16x9;
+			break;
+		case SettingKey::vsync:
 			g_Config.bVSync = !g_Config.bVSync;
 			break;
-		case 4: {
+		case SettingKey::frameskip: {
 			// Automatic sits one step past the end of the list, so the row reads
 			// Off, 1, 2, 3, 4, Automatic and wraps.
 			const int count = (int)std::size(kFrameSkip);
-			const int at = g_Config.bAutoFrameSkip ? count : std::clamp(g_Config.iFrameSkip, 0, count - 1);
+			const int at =
+			    g_Config.bAutoFrameSkip ? count : std::clamp(g_Config.iFrameSkip, 0, count - 1);
 			const int next = ((at + delta) % (count + 1) + count + 1) % (count + 1);
 			g_Config.bAutoFrameSkip = next == count;
 			if (!g_Config.bAutoFrameSkip) {
@@ -457,14 +556,29 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			}
 			break;
 		}
-		case 5:
+		case SettingKey::frameRate:
+			g_Config.iShowStatusFlags ^= (int)ShowStatusFlags::FPS_COUNTER;
+			break;
+		case SettingKey::hardwareTransform:
+			g_Config.bHardwareTransform = !g_Config.bHardwareTransform;
+			break;
+		case SettingKey::softwareSkinning:
+			g_Config.bSoftwareSkinning = !g_Config.bSoftwareSkinning;
+			break;
+		case SettingKey::lazyTextures:
+			g_Config.bTextureBackoffCache = !g_Config.bTextureBackoffCache;
+			break;
+		case SettingKey::skipBufferEffects:
+			g_Config.bSkipBufferEffects = !g_Config.bSkipBufferEffects;
+			break;
+		case SettingKey::sound:
 			g_Config.bEnableSound = !g_Config.bEnableSound;
 			break;
-		case 6:
+		case SettingKey::volume:
 			// VOLUMEHI_FULL is 100; five is a step a player can hear.
 			g_Config.iGameVolume = std::clamp(g_Config.iGameVolume + delta * 5, 0, VOLUMEHI_FULL);
 			break;
-		case 7: {
+		case SettingKey::menuSounds: {
 			// Off, then every set found under /app0/ui/sfx. Which one suits is a
 			// matter of taste, so it is a choice rather than something psp5
 			// decides - and adding one is adding a folder.
@@ -481,10 +595,7 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			prefs::setSoundSet(at == 0 ? std::string() : sets[(std::size_t)(at - 1)]);
 			break;
 		}
-		case 8:
-			g_Config.iShowStatusFlags ^= (int)ShowStatusFlags::FPS_COUNTER;
-			break;
-		case 9: {
+		case SettingKey::fastForward: {
 			// 0 means unlimited, and it sits past the top of the range rather
 			// than at the bottom, where it would be reached by slowing down.
 			int limit = g_Config.iAnalogFpsLimit <= 0 ? 1000 : g_Config.iAnalogFpsLimit;
@@ -497,13 +608,13 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			g_Config.iAnalogFpsLimit = limit;
 			break;
 		}
-		case 10:
+		case SettingKey::hardcore:
 			prefs::setHardcore(!prefs::hardcore());
 			break;
-		case 11:
+		case SettingKey::replaceTextures:
 			prefs::setReplaceTextures(!prefs::replaceTextures());
 			break;
-		case 12:
+		case SettingKey::saveNewTextures:
 			prefs::setSaveNewTextures(!prefs::saveNewTextures());
 			break;
 		default:

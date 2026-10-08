@@ -11,11 +11,57 @@
 
 namespace psp5 {
 
+// Which setting a row is. Rows used to be identified by their position, and
+// Adjust switched on it - so a row that was not built shifted every row under
+// it onto the wrong setting. A game's panel leaves four of them out, so the
+// position is no longer something to count on.
+enum class SettingKey {
+	// ---- picture ----
+	resolution,
+	filtering,
+	anisotropy,
+	upscale,
+	upscaleType,
+	deposterize,
+	antialiasing,
+	smart2d,
+	crop16x9,
+	vsync,
+	frameskip,
+	frameRate,
+	// ---- what the emulator does with the geometry ----
+	hardwareTransform,
+	softwareSkinning,
+	lazyTextures,
+	skipBufferEffects,
+	// ---- sound ----
+	sound,
+	volume,
+	menuSounds,
+	// ---- the rest ----
+	fastForward,
+	hardcore,
+	replaceTextures,
+	saveNewTextures,
+};
+
+// Which page of the settings panel a row belongs to.
+enum class SettingCategory {
+	graphics,
+	audio,
+	system,
+	count,
+};
+
+const char *settingCategoryName(SettingCategory category);
+
 // One row of the settings panel. Everything the panel draws is here as text, so
 // the screen that draws it needs none of PPSSPP's headers - the same split as
 // PS5GameArt, and for the same reason: that file is compiled with volk's Vulkan
 // prototypes and PPSSPP keeps its own in another namespace.
 struct SettingItem {
+	SettingKey key = SettingKey::resolution;
+	SettingCategory category = SettingCategory::graphics;
 	std::string label;
 	std::string value;
 	std::string hint;

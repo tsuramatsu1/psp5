@@ -518,6 +518,7 @@ class Aurora final : public app::Concept
 
     void toggle_settings(app::Feedback &feedback)
     {
+        settings_page_ = 0;
         if (settings_open_)
         {
             close_settings(feedback);
@@ -537,11 +538,60 @@ class Aurora final : public app::Concept
         return psp5::SettingsPanel().scopedToGame();
     }
 
+    // The settings are paged: Picture, Sound, System, with L1 and R1 between
+    // them. Thirty-odd rows on one list is a list nobody reads to the end of.
+    static constexpr int kSettingPages = static_cast<int>(psp5::SettingCategory::count);
+
+    bool on_page(const psp5::SettingItem &item) const
+    {
+        return static_cast<int>(item.category) == settings_page_;
+    }
+
+    int page_count() const
+    {
+        int rows = 0;
+        for (const psp5::SettingItem &item : psp5::SettingsPanel().items())
+        {
+            if (on_page(item))
+                ++rows;
+        }
+        return rows;
+    }
+
+    // The nth setting on this page, as an index into the whole list.
+    int page_item(int nth) const
+    {
+        const std::span<const psp5::SettingItem> items = psp5::SettingsPanel().items();
+        int seen = 0;
+        for (int i = 0; i < static_cast<int>(items.size()); ++i)
+        {
+            if (!on_page(items[static_cast<std::size_t>(i)]))
+                continue;
+            if (seen == nth)
+                return i;
+            ++seen;
+        }
+        return -1;
+    }
+
+    // The override switch sits above every page of a game's panel: it is what
+    // decides whether anything under it can be changed at all.
+    int head_rows() const
+    {
+        return game_scoped() ? 1 : 0;
+    }
+
+    // RetroAchievements and Close PSP5 belong to the title, and to one page.
+    int tail_rows() const
+    {
+        return !game_scoped() && settings_page_ == static_cast<int>(psp5::SettingCategory::system)
+                   ? 2
+                   : 0;
+    }
+
     int settings_rows() const
     {
-        // The settings, then RetroAchievements and Close psp5 - unless this is
-        // one game's panel, which has neither and the override switch instead.
-        return static_cast<int>(psp5::SettingsPanel().size()) + (game_scoped() ? 1 : 2);
+        return head_rows() + page_count() + tail_rows();
     }
 
     bool override_row(int row) const
@@ -551,14 +601,12 @@ class Aurora final : public app::Concept
 
     bool quit_row(int row) const
     {
-        return !game_scoped() && row == settings_rows() - 1;
+        return tail_rows() == 2 && row == settings_rows() - 1;
     }
 
-    // One row above Close psp5, and only on the title's own settings: an
-    // account belongs to the player, not to a game.
     bool achievements_row(int row) const
     {
-        return !game_scoped() && row == settings_rows() - 2;
+        return tail_rows() == 2 && row == settings_rows() - 2;
     }
 
     // Which setting a row shows, or -1 when the row is not one.
@@ -566,8 +614,7 @@ class Aurora final : public app::Concept
     {
         if (quit_row(row) || achievements_row(row) || override_row(row))
             return -1;
-        const int index = game_scoped() ? row - 1 : row;
-        return index >= 0 && index < static_cast<int>(psp5::SettingsPanel().size()) ? index : -1;
+        return page_item(row - head_rows());
     }
 
     // Signing in takes two answers, so the keyboard is opened twice and this
@@ -781,12 +828,25 @@ class Aurora final : public app::Concept
     void update_settings(const InputFrame &input, app::Feedback &feedback)
     {
         psp5::Settings &settings = psp5::SettingsPanel();
-        const int count = settings_rows();
         if (input.is_pressed(Action::back))
         {
             toggle_settings(feedback);
             return;
         }
+
+        // L1 and R1 turn the page, as they do on the shelf behind it.
+        if (input.is_pressed(Action::page_prev) || input.is_pressed(Action::page_next))
+        {
+            const int step = input.is_pressed(Action::page_next) ? 1 : kSettingPages - 1;
+            settings_page_ = (settings_page_ + step) % kSettingPages;
+            setting_ = 0;
+            feedback.play(audio::Cue::tab);
+            return;
+        }
+
+        const int count = settings_rows();
+        if (count == 0)
+            return;
 
         if (input.nav == Direction::up || input.nav == Direction::down)
         {
@@ -1271,6 +1331,28 @@ class Aurora final : public app::Concept
         ui::text(list, fonts.display,
                  game_scoped() ? psp5::SettingsPanel().gameTitle() : std::string("Settings"),
                  kMargin, 190 - 20 * (1.0f - in), 64, kWhite);
+
+        // The pages, as the shelf draws its views: the one in hand in full, the
+        // others quiet, with the same L1/R1 glyphs beside them.
+        {
+            const ui::GlyphStyle style = ui::GlyphStyle::dark();
+            float x = kMargin;
+            ui::draw_button(list, fonts, style, ui::Button::l1, x, 228, 30);
+            x += ui::button_width(ui::Button::l1, 30) + 14;
+            for (int i = 0; i < kSettingPages; ++i)
+            {
+                const bool here = i == settings_page_;
+                const std::string name =
+                    ui::upper(psp5::settingCategoryName(static_cast<psp5::SettingCategory>(i)));
+                const float w = fonts.semibold.font->measure(name, 22, 3.0f);
+                ui::text(list, fonts.semibold, name, x, 236, 22,
+                         here ? kWhite : kWhite.with_alpha(0.4f), gfx::Align::left, 3.0f);
+                if (here)
+                    list.rounded_rect({x, 248, w, 3}, 2, palette_[3].value());
+                x += w + 34;
+            }
+            ui::draw_button(list, fonts, style, ui::Button::r1, x - 10, 228, 30);
+        }
         // The focused row's explanation, in the one fixed place: under the title
         // rather than under the list, which would be past the foot of the screen
         // once every row is on it.
@@ -1284,7 +1366,7 @@ class Aurora final : public app::Concept
             : override_row(setting_)     ? "Keeps a separate set of settings for this game."
             : at >= 0                    ? rows[static_cast<std::size_t>(at)].hint.c_str()
                                          : "";
-        ui::text(list, fonts.regular, hint, kMargin, 243, 25, kWhite.with_alpha(0.7f));
+        ui::text(list, fonts.regular, hint, kMargin, 286, 25, kWhite.with_alpha(0.7f));
         list.pop_opacity();
 
         // The list scrolls. It used to draw every row from a fixed top, which
@@ -1293,7 +1375,7 @@ class Aurora final : public app::Concept
         // worked out from the space there is, so adding a setting cannot
         // overrun the screen again.
         constexpr float kRow = 56.0f;
-        const float top = 300.0f;
+        const float top = 330.0f;
         const float width = gfx::kVirtualWidth - kMargin * 2;
         const float shake = ui::shake(nudge_.value, clock_, 16.0f, 8.0f);
         const int count = settings_rows();
@@ -1307,7 +1389,7 @@ class Aurora final : public app::Concept
         {
             char counter[32];
             std::snprintf(counter, sizeof(counter), "%d of %d", setting_ + 1, count);
-            ui::text(list, fonts.regular, counter, gfx::kVirtualWidth - kMargin, 243, 24,
+            ui::text(list, fonts.regular, counter, gfx::kVirtualWidth - kMargin, 286, 24,
                      kWhite.with_alpha(0.5f), gfx::Align::right);
         }
 
@@ -2043,6 +2125,7 @@ class Aurora final : public app::Concept
     std::vector<Shelf> shelves_;
     psp5::GameView view_ = psp5::GameView::recent; // how the library is ordered
     bool settings_open_ = false;                   // OPTIONS opened the settings panel
+    int settings_page_ = 0;                        // Picture, Sound, System
     int setting_ = 0;                              // its focused row
     Typing typing_ = Typing::none;                 // which answer the keyboard is taking
     int sign_in_button_ = 0;                       // the focused button of the sign-in dialog

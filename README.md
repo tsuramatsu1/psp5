@@ -30,20 +30,48 @@ title's own folder:
 ```
 PPSA99131/memstick/PSP/GAME/<your game>.iso     # also .cso, .chd, EBOOT.PBP
 PPSA99131/memstick/PSP/Cheats/<DISC_ID>.ini     # CWCheat files
+PPSA99131/memstick/PSP/Cheats/cheat.db          # the CWCheat database, to import from
+PPSA99131/memstick/PSP/TEXTURES/<DISC_ID>/      # a texture pack, with its textures.ini
 ```
+
+The disc id is shown under the title on the home screen.
 
 ### RetroAchievements
 
-Sign in from **OPTIONS → RetroAchievements** and games award achievements as you
-play; **R1 + R3** shows the list over a running game, with its real badges. The
-account is the player's rather than the game's, so PSP5 keeps the answer in its
-own `config/psp5.txt` instead of PPSSPP's `bAchievementsEnable`, which is one of
-its per-game settings — a game configured before signing in would otherwise carry
-"off" for ever. The login token is PPSSPP's, under `PSP/SYSTEM`.
+Sign in from **OPTIONS → System → RetroAchievements** and games award
+achievements as you play. The list opens two ways, and looks the same in both:
+**R2** on the home screen, for a game before it is played, and **R1 + R3** over a
+running game. Left and right filter it — all, locked, unlocked — and the badges
+are the real ones.
+
+Reading a game's achievements before it runs means identifying it: the disc
+image is hashed on a worker thread, which takes a moment and is why the bar
+opens on a wait. Nothing is asked of the server twice.
+
+The account is the player's rather than the game's, so PSP5 keeps the answer in
+its own `config/psp5.txt` instead of PPSSPP's `bAchievementsEnable`, which is one
+of its per-game settings — a game configured before signing in would otherwise
+carry "off" for ever. The login token is PPSSPP's, under `PSP/SYSTEM`.
+
+**Hardcore mode is off by default.** RetroAchievements forbids save states while
+it is on, and PPSSPP enforces that by dropping the operation silently — no
+message, nothing in the log. It is in the settings for anyone who wants it, and
+it says what it costs.
 
 This needs HTTPS, which the console has no system libcurl for. See
 **Building** — without it the title still builds and runs, and says so instead of
 offering to sign in.
+
+### Texture packs
+
+**Settings → System → Texture replacement** loads a pack from
+`memstick/PSP/TEXTURES/<DISC_ID>/`. A pack needs a `textures.ini` beside its
+images, even a bare one - without it the replacer stays off and says nothing.
+
+**Save new textures** writes what a game draws to
+`memstick/PSP/TEXTURES/<DISC_ID>/new/`, named by hash, which is how a pack is
+started. A file put back in the folder above under the same name replaces that
+texture; there is no need to list it anywhere.
 
 ### Controls
 
@@ -55,10 +83,14 @@ On the home screen:
 | **Cross** | the game's details: Play, Resume, cheats |
 | **Square** | settings for the game under the cursor |
 | **Triangle** | keep a game in Favorites |
-| **OPTIONS** | settings for the title, and *Close PSP5* at the foot of them |
+| **R2** | this game's achievements |
+| **OPTIONS** | settings for the title |
 
 *Resume* appears in place of the cheats entry when the game has a save state,
 and boots it straight into the newest one.
+
+In the settings, **L1 / R1** turn the page — Picture, Sound, System — and left
+and right change the focused row. *Close PSP5* is at the foot of System.
 
 In a game:
 
@@ -66,6 +98,15 @@ In a game:
 | --- | --- |
 | **L2 + R2** | the menu: cheats, save states, and the way out |
 | **R1 + R3** | the achievements for this game |
+
+The triggers are used for the menu because the PSP has no L2 or R2 of its own -
+its shoulder buttons are L1 and R1, which a game needs.
+
+### Typing
+
+PSP5 draws its own keyboard, with the console's own shortcuts: **Square**
+deletes, **Triangle** is a space, **L1 / R1** move the text cursor, **L2**
+shifts, **R2** is done, **Circle** gives up.
 
 ## What it is made of
 
@@ -149,6 +190,8 @@ the desktop one. `src/` is the console's:
 | `ui/PS5GameArt.cpp` | `ICON0.PNG`, `PIC1.PNG` and `PARAM.SFO`, read out of an ISO or PBP |
 | `ui/PS5Cheats.cpp`, `ui/PS5Settings.cpp` | the cheat file, and PPSSPP's configuration |
 | `ui/PS5Prefs.cpp` | the few settings that are PSP5's own, in `config/psp5.txt` |
+| `ui/PS5GameAchievements.cpp` | a game's achievements, read on the home screen before it is played |
+| `ui/PS5Keyboard.cpp` | typing on a controller, with the console's own shortcuts |
 | `ui/PS5GameSound.cpp` | the selected game's `SND0.AT3`, under the shelf |
 | `ui/kit/aurora.cpp` | PSP5's copy of the kit's Aurora Shelf design |
 | `platform/` | klog, splash, pad, audio and the shell exit (vendored, MIT) |
@@ -191,6 +234,19 @@ exists, and nothing on the home screen creates one. PSP5 calls
 `Achievements::UpdateSettings` unconditionally when its own setting is on, which
 builds the client and logs back in from the saved token.
 
+**PPSSPP's per-game settings are not where PSP5's answers live.** Six of them
+now: achievements, hardcore mode, cheats, the control mapping, and both texture
+replacement switches. Each is marked `CfgFlag::PER_GAME`, which means
+`Config::LoadGameConfig` - called from `Load_PSP_ISO` partway through a boot -
+overwrites whatever was set at start-up with whatever that game's second ini
+happens to hold. A setting changed on the home screen was simply undone on the
+way into the game, silently.
+
+So PSP5 keeps its own answers in `config/psp5.txt` and asserts them again at one
+anchor in `EmuScreen`, after `LoadGameConfig` has had its say. Anything new that
+turns out to be `PER_GAME` belongs there too. It is the single most repeated
+trap in this codebase.
+
 **The patches are kept apart.** `ps5-port.patch` is upstream's, unmodified, so it
 can be replaced wholesale when PS5_RetroArch's moves. `ps5-standalone.patch` is
 PSP5's, generated by `tools/mkpatch.py` — each edit anchored to the text it
@@ -215,7 +271,14 @@ PPSSPP waiting for a callback that never arrives.
 
 `sce_sys/icon0.png` is drawn by `tools/make-icon.py` (512x512, RGB, no alpha, as
 the console wants) and `tools/link-title.sh` stages it. Replace either the file or
-the script to change it.
+the script to change it. The wordmark is drawn rather than set in a typeface:
+the PSP logo's letters are single-weight strokes that no ordinary face has.
+
+The home screen's sound sets are drawn too. `tools/make-sounds.py` synthesises
+`assets/sfx/<set>/<cue>_NN.wav` - nothing sampled, nothing licensed - and the
+link stages them beside the kit's two. A set is a folder, so adding one is
+adding a folder: PSP5 lists what it finds under `/app0/ui/sfx` and offers them
+all in the settings.
 
 ## Licence
 
