@@ -13,6 +13,7 @@
 #include "ui/PS5Keyboard.h"
 
 #include <algorithm>
+#include <string>
 #include <array>
 #include <cmath>
 
@@ -148,6 +149,7 @@ void Keyboard::Open(const std::string &title, const std::string &prompt,
 	title_ = title;
 	prompt_ = prompt;
 	text_ = initial;
+	cursor_ = text_.size();  // at the end of whatever was already there
 	key_ = 24;
 	column_ = 4;
 	shift_ = 0;
@@ -183,10 +185,11 @@ void Keyboard::Press(int key, hui::ui::Feedback &feedback) {
 			shift_ = shift_ == 0 ? 1 : (shift_ == 1 ? 2 : 0);
 			return;
 		case KeyKind::erase:
-			if (text_.empty()) {
+			if (cursor_ == 0) {
 				return;
 			}
-			text_.pop_back();
+			text_.erase(cursor_ - 1, 1);
+			--cursor_;
 			return;
 		case KeyKind::done:
 			accepted_ = true;
@@ -198,7 +201,8 @@ void Keyboard::Press(int key, hui::ui::Feedback &feedback) {
 	if (text_.size() >= kMaxLength) {
 		return;
 	}
-	text_.push_back(shift_ ? info.upper : info.lower);
+	text_.insert(cursor_, 1, shift_ ? info.upper : info.lower);
+	++cursor_;
 	if (shift_ == 1) {
 		shift_ = 0;  // armed for one letter only
 	}
@@ -231,11 +235,20 @@ bool Keyboard::Update(const hui::InputFrame &input, hui::ui::Feedback &feedback,
 	if (input.is_pressed(Action::north)) {
 		Press(kSpaceKey, feedback);
 	}
-	if (input.is_pressed(Action::page_prev)) {
-		Press(kShiftKey, feedback);
+	// L1 and R1 move the text cursor, as they do on the console's keyboard.
+	if (input.is_pressed(Action::page_prev) && cursor_ > 0) {
+		--cursor_;
+		feedback.play(hui::audio::Cue::focus, 1.0f, 0.0f);
 	}
-	if (input.is_pressed(Action::page_next)) {
-		Press(kDoneKey, feedback);
+	if (input.is_pressed(Action::page_next) && cursor_ < text_.size()) {
+		++cursor_;
+		feedback.play(hui::audio::Cue::focus, 1.0f, 0.0f);
+	}
+	if (input.is_pressed(Action::jump_prev)) {
+		Press(kShiftKey, feedback);  // L2
+	}
+	if (input.is_pressed(Action::jump_next)) {
+		Press(kDoneKey, feedback);  // R2
 	}
 	if (input.is_pressed(Action::back)) {
 		accepted_ = false;
@@ -248,6 +261,23 @@ bool Keyboard::Update(const hui::InputFrame &input, hui::ui::Feedback &feedback,
 	}
 	return false;
 }
+
+namespace {
+
+// The button that works a key without the cursor having to be on it. Shown on
+// the key itself, the way the console's own keyboard shows them, so the
+// shortcuts can be read off the screen instead of remembered.
+hui::ui::Button KeyBadge(KeyKind kind) {
+	switch (kind) {
+		case KeyKind::shift: return hui::ui::Button::l2;
+		case KeyKind::space: return hui::ui::Button::triangle;
+		case KeyKind::erase: return hui::ui::Button::square;
+		case KeyKind::done: return hui::ui::Button::r2;
+		default: return hui::ui::Button::none;
+	}
+}
+
+}  // namespace
 
 void Keyboard::Draw(hui::gfx::DrawList &list, const hui::ui::Fonts &fonts,
                     hui::gfx::Color accent) const {
@@ -294,9 +324,30 @@ void Keyboard::Draw(hui::gfx::DrawList &list, const hui::ui::Fonts &fonts,
 		}
 		const Color ink = focused ? kPanel : kInk;
 		const bool wide = key.kind != KeyKind::character;
-		hui::ui::text(list, wide ? fonts.semibold : fonts.regular, KeyLabel(key, shift_),
-		              rect.x + rect.w * 0.5f, rect.y + rect.h * 0.5f + (wide ? 7.0f : 12.0f),
-		              wide ? 20.0f : 34.0f, ink, hui::gfx::Align::center);
+		const hui::ui::Button badge = KeyBadge(key.kind);
+		if (badge == hui::ui::Button::none) {
+			hui::ui::text(list, fonts.regular, KeyLabel(key, shift_), rect.x + rect.w * 0.5f,
+			              rect.y + rect.h * 0.5f + 12.0f, 34.0f, ink, hui::gfx::Align::center);
+			continue;
+		}
+
+		// The glyph and the label as one block, centred on the key.
+		const hui::ui::GlyphStyle style =
+		    focused ? hui::ui::GlyphStyle::light() : hui::ui::GlyphStyle::dark();
+		const std::string label = KeyLabel(key, shift_);
+		constexpr float kGlyph = 26.0f;
+		constexpr float kGap = 9.0f;
+		constexpr float kText = 20.0f;
+		// draw_button takes the glyph's LEFT edge, not its centre, and a glyph is
+		// as wide as its own shape - L2 and R2 are pills, Square and Triangle are
+		// round. Passing a centre and assuming one width put them through the
+		// label.
+		const float glyphW = hui::ui::button_width(badge, kGlyph);
+		const float width = glyphW + kGap + fonts.semibold.font->measure(label, kText);
+		const float left = rect.x + (rect.w - width) * 0.5f;
+		hui::ui::draw_button(list, fonts, style, badge, left, rect.y + rect.h * 0.5f, kGlyph);
+		hui::ui::text(list, fonts.semibold, label, left + glyphW + kGap,
+		              rect.y + rect.h * 0.5f + 7.0f, kText, ink, hui::gfx::Align::left);
 	}
 }
 

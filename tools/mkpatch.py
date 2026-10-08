@@ -746,6 +746,7 @@ extern "C" bool PS5_AchievementsEnabled();
 extern "C" bool PS5_ResumeRequested();
 extern "C" bool PS5_HardcoreEnabled();
 extern "C" bool PS5_CheatsEnabled();
+extern "C" void PS5_ApplyControls();
 """
 assert t.count(old) == 1, "emuscreen top anchor"
 t = t.replace(old, new, 1)
@@ -762,6 +763,9 @@ new = """	// Initialize retroachievements, now that we're on the right thread.
 	// per-game setting, so a game ini written before this change still has one
 	// and LoadGameConfig would put it back.
 	g_Config.bEnableCheats = PS5_CheatsEnabled();
+	// LoadGameConfig has just read the game's own ini, and KeyMap::LoadFromIni
+	// takes the control mapping with it - so psp5's is set again here, after.
+	PS5_ApplyControls();
 #endif
 	if (g_Config.bAchievementsEnable) {"""
 assert t.count(old) == 1, "achievements boot anchor"

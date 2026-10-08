@@ -432,10 +432,10 @@ index 63f1ed8ac..cb0e2e526 100644
  	std::lock_guard<std::mutex> lock(mutex_);
  
 diff --git a/UI/EmuScreen.cpp b/UI/EmuScreen.cpp
-index b29484204..068633e7f 100644
+index b29484204..e4cd2f4c2 100644
 --- a/UI/EmuScreen.cpp
 +++ b/UI/EmuScreen.cpp
-@@ -1,5 +1,12 @@
+@@ -1,5 +1,13 @@
  // Copyright (c) 2012- PPSSPP Project.
  
 +// psp5: declared here rather than beside the drawing hooks further down, which
@@ -444,11 +444,12 @@ index b29484204..068633e7f 100644
 +extern "C" bool PS5_ResumeRequested();
 +extern "C" bool PS5_HardcoreEnabled();
 +extern "C" bool PS5_CheatsEnabled();
++extern "C" void PS5_ApplyControls();
 +
  // This program is free software: you can redistribute it and/or modify
  // it under the terms of the GNU General Public License as published by
  // the Free Software Foundation, version 2.0 or later versions.
-@@ -363,6 +370,16 @@ void EmuScreen::bootComplete() {
+@@ -363,6 +371,19 @@ void EmuScreen::bootComplete() {
  	}, (void *)this);
  
  	// Initialize retroachievements, now that we're on the right thread.
@@ -461,11 +462,14 @@ index b29484204..068633e7f 100644
 +	// per-game setting, so a game ini written before this change still has one
 +	// and LoadGameConfig would put it back.
 +	g_Config.bEnableCheats = PS5_CheatsEnabled();
++	// LoadGameConfig has just read the game's own ini, and KeyMap::LoadFromIni
++	// takes the control mapping with it - so psp5's is set again here, after.
++	PS5_ApplyControls();
 +#endif
  	if (g_Config.bAchievementsEnable) {
  		std::string errorString;
  		Achievements::SetGame(PSP_CoreParameter().fileToStart, PSP_CoreParameter().fileType, PSP_LoadedFile());
-@@ -389,8 +406,11 @@ void EmuScreen::bootComplete() {
+@@ -389,8 +410,11 @@ void EmuScreen::bootComplete() {
  	System_Notify(SystemNotification::DISASSEMBLY);
  
  	NOTICE_LOG(Log::Boot, "Booted %s...", PSP_CoreParameter().fileToStart.c_str());
@@ -479,7 +483,7 @@ index b29484204..068633e7f 100644
  		AutoLoadSaveState();
  	}
  
-@@ -1486,7 +1506,9 @@ void EmuScreen::update() {
+@@ -1486,7 +1510,9 @@ void EmuScreen::update() {
  
  	if (pauseTrigger_) {
  		pauseTrigger_ = false;
@@ -489,7 +493,7 @@ index b29484204..068633e7f 100644
  	}
  
  	if (!PSP_IsInited())
-@@ -1933,6 +1955,11 @@ void EmuScreen::runImDebugger() {
+@@ -1933,6 +1959,11 @@ void EmuScreen::runImDebugger() {
  	}
  }
  
@@ -501,7 +505,7 @@ index b29484204..068633e7f 100644
  void EmuScreen::renderImDebugger() {
  	if (g_Config.bShowImDebugger) {
  		Draw::DrawContext *draw = screenManager()->getDrawContext();
-@@ -1943,6 +1970,13 @@ void EmuScreen::renderImDebugger() {
+@@ -1943,6 +1974,13 @@ void EmuScreen::renderImDebugger() {
  }
  
  bool EmuScreen::hasVisibleUI() {
@@ -515,7 +519,7 @@ index b29484204..068633e7f 100644
  	// Regular but uncommon UI.
  	if (saveStatePreview_->GetVisibility() != UI::V_GONE || loadingSpinner_->GetVisibility() == UI::V_VISIBLE)
  		return true;
-@@ -1988,6 +2022,13 @@ void EmuScreen::renderUI() {
+@@ -1988,6 +2026,13 @@ void EmuScreen::renderUI() {
  		}
  	}
  
@@ -529,7 +533,7 @@ index b29484204..068633e7f 100644
  #ifdef USE_PROFILER
  	if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::FRAME_PROFILE && PSP_IsInited()) {
  		DrawProfile(*ctx);
-@@ -2037,6 +2078,20 @@ void EmuScreen::AutoLoadSaveState() {
+@@ -2037,6 +2082,20 @@ void EmuScreen::AutoLoadSaveState() {
  
  	std::string gamePrefix = SaveState::GetGamePrefix(g_paramSFO);
  

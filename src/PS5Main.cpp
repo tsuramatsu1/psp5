@@ -526,6 +526,7 @@ int main(int argc, char *argv[]) {
 	// states were written into a PPSSPP_STATE directory that did not exist, and
 	// failed. PPSSPP's own routine rather than a hand-written list, so it stays
 	// right if the set changes.
+	psp5::ApplyControlMapping();
 	psp5::ApplyAchievementsPreference();
 
 	if (!CreateSysDirectories()) {

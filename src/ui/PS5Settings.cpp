@@ -21,6 +21,7 @@
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/RetroAchievements.h"
+#include "Core/KeyMap.h"
 #include "Core/SaveState.h"
 #include "Core/System.h"
 #include "Common/StringUtils.h"
@@ -96,6 +97,34 @@ bool MenuSoundsEnabled() {
 // Called once, after NativeInit has read the configuration: PPSSPP only builds
 // its achievements client when the setting is on, and the setting it just read
 // knows nothing about psp5's.
+// Fast-forward on the right trigger, and R3 left alone.
+//
+// This is PPSSPP's own default for the trigger, set again here because it does
+// not stay set: Config::LoadGameConfig calls KeyMap::LoadFromIni on the game's
+// own ini partway through a boot, so whatever mapping that file was written
+// with wins over whatever is in memory. Asserting it at start-up and again as a
+// game boots is the only way it holds.
+//
+// R3 carried PPSSPP's Speed toggle by default. psp5 opens the achievements bar
+// on R1 + R3, and a lone R3 silently changing the emulation speed is not what
+// anyone pressing it is after, so that mapping goes.
+void ApplyControlMapping() {
+	for (int guard = 0; guard < 8 && KeyMap::PspButtonHasMappings(VIRTKEY_SPEED_TOGGLE); ++guard) {
+		KeyMap::DeleteNthMapping(VIRTKEY_SPEED_TOGGLE, 0);
+	}
+	KeyMap::SetInputMapping(
+		VIRTKEY_FASTFORWARD,
+		KeyMap::MultiInputMapping(
+			InputMapping(DEVICE_ID_PAD_0, JOYSTICK_AXIS_RTRIGGER, +1)),
+		true);
+	psp5::Trace("controls: fast-forward on the right trigger, R3 free");
+}
+
+// Asked by PPSSPP as a game boots, after it has read the game's own ini.
+extern "C" void PS5_ApplyControls() {
+	psp5::ApplyControlMapping();
+}
+
 void ApplyAchievementsPreference() {
 	if (!prefs::achievements()) {
 		return;

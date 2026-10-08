@@ -1717,20 +1717,26 @@ class Aurora final : public app::Concept
         constexpr float kText = 26.0f;
         const char *labels[3] = {"Move", "Filter", "Back"};
 
+        // Each glyph is as wide as its own shape, and draw_button takes its left
+        // edge rather than its centre.
+        const auto glyph_width = [&](int i) {
+            return ui::button_width(i == 2 ? ui::Button::circle : ui::Button::dpad, kSize);
+        };
+
         float total = 0.0f;
         for (int i = 0; i < 3; ++i)
-            total += kSize + kIconGap + fonts.regular.font->measure(labels[i], kText) +
+            total += glyph_width(i) + kIconGap + fonts.regular.font->measure(labels[i], kText) +
                      (i < 2 ? kItemGap : 0.0f);
 
         float x = 1824.0f - total;
         for (int i = 0; i < 3; ++i)
         {
+            const float gw = glyph_width(i);
             if (i == 2)
-                ui::draw_button(list, fonts, style, ui::Button::circle, x + kSize * 0.5f, kCy,
-                                kSize);
+                ui::draw_button(list, fonts, style, ui::Button::circle, x, kCy, kSize);
             else
-                draw_dpad_axis(list, style, x + kSize * 0.5f, kCy, kSize, i == 0);
-            x += kSize + kIconGap;
+                draw_dpad_axis(list, style, x + gw * 0.5f, kCy, kSize, i == 0);
+            x += gw + kIconGap;
             ui::text(list, fonts.regular, labels[i], x, kCy + kText * 0.35f, kText, style.label);
             x += fonts.regular.font->measure(labels[i], kText) + kItemGap;
         }

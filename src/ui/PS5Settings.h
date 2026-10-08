@@ -102,6 +102,9 @@ std::string PlayedLabel(const std::string &discId);
 bool HasSaveState(const std::string &discId);
 
 // Applies psp5's own achievements preference to PPSSPP, after NativeInit.
+// Moves fast-forward from the right trigger to R3, after the controller ini
+// has been read.
+void ApplyControlMapping();
 void ApplyAchievementsPreference();
 bool AchievementsAvailable();
 bool AchievementsLoggedIn();
