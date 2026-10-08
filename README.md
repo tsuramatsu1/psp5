@@ -1,22 +1,22 @@
-# psp5
+# PSP5
 
 **A PSP emulator for the PlayStation 5, based on [PPSSPP](https://github.com/hrydgard/ppsspp).**
 
 PPSSPP is the emulator — its interpreter and x86-64 JIT, its HLE of the PSP's
-operating system, its Vulkan renderer. psp5 is that emulator built as a
+operating system, its Vulkan renderer. PSP5 is that emulator built as a
 standalone PS5 homebrew title: it boots to its own console home screen, reads
 the games off the memory stick, and runs them. None of PPSSPP's own interface is
 shown — not its logo, not its game browser, not its pause menu, and none of its
 on-screen messages.
 
-The title installs as **PSP5**; *psp5* is the project.
+The title installs as **PSP5**; *PSP5* is the project.
 
-The console port itself is not psp5's work: `patches/ppsspp/ps5-port.patch` is
-taken unmodified from PS5_RetroArch, where it is proven on hardware. What psp5
+The console port itself is not PSP5's work: `patches/ppsspp/ps5-port.patch` is
+taken unmodified from PS5_RetroArch, where it is proven on hardware. What PSP5
 adds is what a title needs and a libretro core does not.
 
 PPSSPP already runs on the PS5 as a libretro core inside
-[PS5_RetroArch](https://github.com/mihawk-99/PS5_RetroArch). psp5 is the other
+[PS5_RetroArch](https://github.com/mihawk-99/PS5_RetroArch). PSP5 is the other
 shape of the same work: its own title, with no frontend in front of it — the same
 relationship [PS5SX2](https://github.com/Swordpdf/PS5SX2) has to PS5_RetroArch's
 LRPS2 core.
@@ -36,7 +36,7 @@ PPSA99131/memstick/PSP/Cheats/<DISC_ID>.ini     # CWCheat files
 
 Sign in from **OPTIONS → RetroAchievements** and games award achievements as you
 play; **R1 + R3** shows the list over a running game, with its real badges. The
-account is the player's rather than the game's, so psp5 keeps the answer in its
+account is the player's rather than the game's, so PSP5 keeps the answer in its
 own `config/psp5.txt` instead of PPSSPP's `bAchievementsEnable`, which is one of
 its per-game settings — a game configured before signing in would otherwise carry
 "off" for ever. The login token is PPSSPP's, under `PSP/SYSTEM`.
@@ -115,7 +115,7 @@ RetroAchievements needs HTTPS, and the console has no system libcurl.
 `tools/link-title.sh` looks for PacBrew's libcurl and the OpenSSL it was built
 against under `PSP5_CURL_PREFIX` (default
 `/opt/ps5-payload-sdk/target/user/homebrew`). Without them the link says so and
-the title is built without HTTPS: everything else works, and psp5 reports that
+the title is built without HTTPS: everything else works, and PSP5 reports that
 signing in is unavailable rather than failing at it.
 
 `tools/build.sh` checks the SDK and RADV before it starts and says which one is
@@ -148,9 +148,9 @@ the desktop one. `src/` is the console's:
 | `ui/PS5GameLibrary.cpp` | the memory stick's games, and a cover for each |
 | `ui/PS5GameArt.cpp` | `ICON0.PNG`, `PIC1.PNG` and `PARAM.SFO`, read out of an ISO or PBP |
 | `ui/PS5Cheats.cpp`, `ui/PS5Settings.cpp` | the cheat file, and PPSSPP's configuration |
-| `ui/PS5Prefs.cpp` | the few settings that are psp5's own, in `config/psp5.txt` |
+| `ui/PS5Prefs.cpp` | the few settings that are PSP5's own, in `config/psp5.txt` |
 | `ui/PS5GameSound.cpp` | the selected game's `SND0.AT3`, under the shelf |
-| `ui/kit/aurora.cpp` | psp5's copy of the kit's Aurora Shelf design |
+| `ui/kit/aurora.cpp` | PSP5's copy of the kit's Aurora Shelf design |
 | `platform/` | klog, splash, pad, audio and the shell exit (vendored, MIT) |
 
 ### Decisions worth knowing
@@ -163,12 +163,12 @@ and PPSSPP takes it for the game. Each turn ends in `PS5VulkanContext::ShutdownD
 **The Aurora design is forked, not patched.** The kit's designs read a
 `demo::Catalog` that fills itself in its own constructor, so there is no seam to
 push real content through — and the kit is a pinned checkout that
-`tools/setup-kit.sh` re-fetches, so an edit in place would not survive. psp5 keeps
+`tools/setup-kit.sh` re-fetches, so an edit in place would not survive. PSP5 keeps
 its own copy of the one design it ships and drops the kit's from the build.
 
-**None of PPSSPP's interface is drawn.** Four edits in the patch do it: psp5
+**None of PPSSPP's interface is drawn.** Four edits in the patch do it: PSP5
 hands PPSSPP an `EmuScreen` directly, so neither the logo nor the game browser is
-drawn even once; `MainScreen`'s constructor tells psp5 the game ended, and psp5
+drawn even once; `MainScreen`'s constructor tells PSP5 the game ended, and PSP5
 leaves the frame loop before the switch to it takes effect; the pause menu is
 compiled out; and `ScreenManager::switchScreenNow` makes a screen switch that
 cannot be refused by one already queued.
@@ -185,15 +185,15 @@ only run from `RequestManager::Update`, which `NativeFrame` calls - and
 it calls `PS5_PumpNetwork` each frame; without it a sign-in is posted and waits
 for ever.
 
-**The achievements client is built from psp5's own setting, every start.**
+**The achievements client is built from PSP5's own setting, every start.**
 PPSSPP's `bAchievementsEnable` records what the player wants, not that a client
-exists, and nothing on the home screen creates one. psp5 calls
+exists, and nothing on the home screen creates one. PSP5 calls
 `Achievements::UpdateSettings` unconditionally when its own setting is on, which
 builds the client and logs back in from the saved token.
 
 **The patches are kept apart.** `ps5-port.patch` is upstream's, unmodified, so it
 can be replaced wholesale when PS5_RetroArch's moves. `ps5-standalone.patch` is
-psp5's, generated by `tools/mkpatch.py` — each edit anchored to the text it
+PSP5's, generated by `tools/mkpatch.py` — each edit anchored to the text it
 replaces, with the reason beside it, so a change in the pinned PPSSPP fails loudly
 there rather than applying somewhere unintended.
 
@@ -204,12 +204,12 @@ to drop them, but whether it does depends on the host LLVM, so `tools/link-title
 links, collects what is left, binds each with `--defsym`, and links again.
 
 **Flexible memory stays at the console default (448 MiB).** The 1 GiB a title can
-ask for in `param.json` is taken out of direct memory, and psp5's large
+ask for in `param.json` is taken out of direct memory, and PSP5's large
 allocations — the JIT's code cache, the guest memory arena, the heap, the GPU's
 buffers — are all in direct memory already. Raising it would cost 576 MiB of the
 pool that actually matters here. `sce_sys/param.json` is where to change it.
 
-**System dialogs are refused, not ignored.** Every `System_MakeRequest` psp5 does
+**System dialogs are refused, not ignored.** Every `System_MakeRequest` PSP5 does
 not implement returns false. A request that is neither answered nor refused leaves
 PPSSPP waiting for a callback that never arrives.
 

@@ -73,6 +73,18 @@ void setHardcore(bool on);
 bool cheatsFor(const std::string &discId);
 void setCheatsFor(const std::string &discId, bool on);
 
+// Texture replacement: whether a game's pack under
+// memstick/PSP/TEXTURES/<GAMEID>/ is loaded, and whether the textures a game
+// draws are written out there to build one.
+//
+// Here rather than in PPSSPP's bReplaceTextures and bSaveNewTextures for the
+// same reason as everything above: both are marked PER_GAME, so the game's own
+// ini overrides whatever is in memory partway through a boot.
+bool replaceTextures();
+void setReplaceTextures(bool on);
+bool saveNewTextures();
+void setSaveNewTextures(bool on);
+
 // Reads config/psp5.txt. Called once, before the home screen is built.
 void Load();
 

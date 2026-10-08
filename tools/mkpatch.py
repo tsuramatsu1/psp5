@@ -747,6 +747,8 @@ extern "C" bool PS5_ResumeRequested();
 extern "C" bool PS5_HardcoreEnabled();
 extern "C" bool PS5_CheatsEnabled();
 extern "C" void PS5_ApplyControls();
+extern "C" bool PS5_ReplaceTextures();
+extern "C" bool PS5_SaveNewTextures();
 """
 assert t.count(old) == 1, "emuscreen top anchor"
 t = t.replace(old, new, 1)
@@ -766,6 +768,10 @@ new = """	// Initialize retroachievements, now that we're on the right thread.
 	// LoadGameConfig has just read the game's own ini, and KeyMap::LoadFromIni
 	// takes the control mapping with it - so psp5's is set again here, after.
 	PS5_ApplyControls();
+	// Texture packs, and dumping to build one. Per-game settings both, so the
+	// game's ini has just overwritten whatever psp5 set at start-up.
+	g_Config.bReplaceTextures = PS5_ReplaceTextures();
+	g_Config.bSaveNewTextures = PS5_SaveNewTextures();
 #endif
 	if (g_Config.bAchievementsEnable) {"""
 assert t.count(old) == 1, "achievements boot anchor"

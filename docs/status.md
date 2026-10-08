@@ -22,21 +22,13 @@ Last reviewed: 2026-10-08.
 | Achievements over a running game | **R1 + R3** |
 | The in-game menu | **L2 + R2** - cheats, save states, exit |
 | Hours played | PPSSPP's own time tracker, per disc id |
+| Typing | psp5's own keyboard, with the console's shortcuts: Square deletes, Triangle spaces, L1/R1 move the cursor, L2 shifts, R2 is done |
 
 ## Not done
 
 | | |
 | --- | --- |
 | Texture replacement | `bReplaceTextures` / `bSaveNewTextures` and `memstick/PSP/TEXTURES/<GAMEID>/` |
-
-## Blocked
-
-**The console's own on-screen keyboard.** `libSceImeDialog` is present on the
-system, but the SDK ships no headers for it and no verified `SceImeDialogParam`
-layout was found to write against. Guessing at the ABI of a system call that
-takes a struct by pointer is how you get a crash that looks like something else,
-so psp5 does not. Text entry is psp5's own panel until a known-good definition
-turns up.
 
 ## Rough edges
 

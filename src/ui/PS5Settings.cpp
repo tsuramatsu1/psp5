@@ -120,6 +120,16 @@ void ApplyControlMapping() {
 	psp5::Trace("controls: fast-forward on the right trigger, R3 free");
 }
 
+// Asked by PPSSPP as a game boots, after it has read the game's own ini. Both
+// of these are PER_GAME settings, so that ini would otherwise win.
+extern "C" bool PS5_ReplaceTextures() {
+	return psp5::prefs::replaceTextures();
+}
+
+extern "C" bool PS5_SaveNewTextures() {
+	return psp5::prefs::saveNewTextures();
+}
+
 // Asked by PPSSPP as a game boots, after it has read the game's own ini.
 extern "C" void PS5_ApplyControls() {
 	psp5::ApplyControlMapping();
@@ -346,6 +356,12 @@ void Settings::Rebuild() {
 
 	items_.push_back({"Achievements hardcore mode", prefs::hardcore() ? "On" : "Off",
 	                  "On earns hardcore unlocks but turns off save states entirely."});
+
+	items_.push_back({"Texture replacement", prefs::replaceTextures() ? "On" : "Off",
+	                  "Uses a pack from PSP/TEXTURES/<GAMEID>/ when a game has one."});
+
+	items_.push_back({"Save new textures", prefs::saveNewTextures() ? "On" : "Off",
+	                  "Writes what a game draws to PSP/TEXTURES/<GAMEID>/new/, to build a pack."});
 }
 
 void Settings::Reload() {
@@ -483,6 +499,12 @@ bool Settings::Adjust(std::size_t index, int delta) {
 		}
 		case 10:
 			prefs::setHardcore(!prefs::hardcore());
+			break;
+		case 11:
+			prefs::setReplaceTextures(!prefs::replaceTextures());
+			break;
+		case 12:
+			prefs::setSaveNewTextures(!prefs::saveNewTextures());
 			break;
 		default:
 			return false;

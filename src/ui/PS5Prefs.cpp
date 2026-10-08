@@ -23,6 +23,9 @@ std::vector<std::string> g_soundSets;
 bool g_achievements = false;
 bool g_hardcore = false;
 std::vector<std::string> g_cheatGames;
+// PPSSPP loads packs by default and dumps nothing; psp5 starts the same way.
+bool g_replaceTextures = true;
+bool g_saveNewTextures = false;
 bool g_loaded = false;
 
 std::string Path() {
@@ -38,6 +41,8 @@ void Save() {
 	fprintf(fh, "soundset=%s\n", g_soundSet.empty() ? "off" : g_soundSet.c_str());
 	fprintf(fh, "achievements=%d\n", g_achievements ? 1 : 0);
 	fprintf(fh, "hardcore=%d\n", g_hardcore ? 1 : 0);
+	fprintf(fh, "replacetextures=%d\n", g_replaceTextures ? 1 : 0);
+	fprintf(fh, "savenewtextures=%d\n", g_saveNewTextures ? 1 : 0);
 	// One line per game that has them on. Absent means off, so a game that is
 	// never touched costs nothing.
 	for (const std::string &game : g_cheatGames) {
@@ -84,6 +89,32 @@ bool achievements() {
 
 bool hardcore() {
 	return g_hardcore;
+}
+
+bool replaceTextures() {
+	return g_replaceTextures;
+}
+
+void setReplaceTextures(bool on) {
+	if (on == g_replaceTextures) {
+		return;
+	}
+	g_replaceTextures = on;
+	Save();
+	psp5::Trace("prefs: texture replacement %s", on ? "on" : "off");
+}
+
+bool saveNewTextures() {
+	return g_saveNewTextures;
+}
+
+void setSaveNewTextures(bool on) {
+	if (on == g_saveNewTextures) {
+		return;
+	}
+	g_saveNewTextures = on;
+	Save();
+	psp5::Trace("prefs: saving new textures %s", on ? "on" : "off");
 }
 
 bool cheatsFor(const std::string &discId) {
@@ -155,6 +186,12 @@ void Load() {
 		}
 		if (sscanf(line, "hardcore=%d", &value) == 1) {
 			g_hardcore = value != 0;
+		}
+		if (sscanf(line, "replacetextures=%d", &value) == 1) {
+			g_replaceTextures = value != 0;
+		}
+		if (sscanf(line, "savenewtextures=%d", &value) == 1) {
+			g_saveNewTextures = value != 0;
 		}
 		char game[64];
 		if (sscanf(line, "cheats=%63s", game) == 1) {
