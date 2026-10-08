@@ -28,7 +28,7 @@ namespace psp5 {
 // The kit's "Code" theme (src/ui/theme.cpp): ink-blue night, hairline borders,
 // a green call to action, blue focus. Taken as it is defined there rather than
 // approximated, so the panels match the design they name.
-constexpr uint32_t kPage = 0xFF0D1117;       // the bar itself
+constexpr uint32_t kPage = 0xFF000000;       // the bar itself
 constexpr uint32_t kSurface = 0xFF161B22;    // a row at rest
 constexpr uint32_t kSurfaceHigh = 0xFF21262D; // ... and under the cursor
 constexpr uint32_t kInk = 0xFFE6EDF3;
@@ -37,7 +37,9 @@ constexpr uint32_t kInkFaint = 0xFF6E7681;
 constexpr uint32_t kPrimary = 0xFF238636;    // on, and anything that acts
 constexpr uint32_t kAccent = 0xFF1F6FEB;     // focus
 constexpr uint32_t kOutline = 0xFF30363D;    // hairlines
-constexpr uint32_t kShade = 0xC00D1117;      // the game, behind the bar
+// Opaque: an overlay over a running game is easier to read against nothing
+// than against whatever happens to be moving behind it.
+constexpr uint32_t kShade = 0xFF000000;      // the game, behind the bar
 
 constexpr float kRadius = 10.0f;
 

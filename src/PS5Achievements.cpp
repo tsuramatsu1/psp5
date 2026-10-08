@@ -20,6 +20,7 @@
 
 #include "Common/Render/DrawBuffer.h"
 #include "Common/UI/Context.h"
+#include "Common/UI/IconCache.h"
 #include "Common/UI/View.h"
 #include "Core/Config.h"
 #include "Core/RetroAchievements.h"
@@ -41,6 +42,8 @@ struct Row {
 	std::string label;
 	std::string detail;
 	std::string value;
+	std::string badge;   // the image RetroAchievements shows for it
+	std::string measure; // "3/10", where the achievement counts towards something
 	bool header = false;
 	bool unlocked = false;
 	float progress = 0.0f;  // 0..1, and only where the achievement measures one
@@ -123,7 +126,11 @@ void Rebuild() {
 			continue;
 		}
 		std::snprintf(value, sizeof(value), "%u", bucket.num_achievements);
-		g_rows.push_back({bucket.label ? bucket.label : "", "", value, true, false, 0.0f});
+		Row head;
+			head.label = bucket.label ? bucket.label : "";
+			head.value = value;
+			head.header = true;
+			g_rows.push_back(head);
 
 		for (uint32_t a = 0; a < bucket.num_achievements; ++a) {
 			const rc_client_achievement_t *achievement = bucket.achievements[a];
@@ -136,10 +143,20 @@ void Rebuild() {
 			row.detail = achievement->description ? achievement->description : "";
 			row.value = value;
 			row.unlocked = achievement->unlocked != 0;
+			// The badge RetroAchievements shows: the plain one once it is earned,
+			// the greyed one until then, which is how its own site reads.
+			const char *badge =
+				row.unlocked ? achievement->badge_url : achievement->badge_locked_url;
+			if (badge && badge[0]) {
+				row.badge = badge;
+				Achievements::DownloadImageIfMissing(row.badge);
+			}
 			// measured_progress is empty unless the achievement counts towards
-			// something, which is the only case worth a bar.
+			// something, which is the only case worth a bar. It goes beside the
+			// description rather than over it - what the achievement asks for is
+			// the part worth reading.
 			if (achievement->measured_progress[0] != '\0') {
-				row.detail = achievement->measured_progress;
+				row.measure = achievement->measured_progress;
 				row.progress = std::clamp(achievement->measured_percent / 100.0f, 0.0f, 1.0f);
 			}
 			g_rows.push_back(row);
@@ -223,13 +240,16 @@ extern "C" void PS5_DrawAchievementsBar(UIContext *ui) {
 		return;
 	}
 
-	// Laid out the way the console lists trophies: a head that says how far
-	// along the game is, then a row per achievement with its mark on the left,
-	// its name and what it asks for, and its points on the right. The marks are
-	// drawn rather than downloaded - rcheevos gives a badge URL, and fetching
-	// one image per achievement to show a list is a lot of network for a panel.
+	// Laid out the way the console lists trophies: a head that says how far along
+	// the game is, then a row per achievement with its badge on the left, its name
+	// and what it asks for, and its points on the right.
+	//
+	// The badges are the real ones. PPSSPP already downloads and caches them for
+	// its own achievement screens, so this asks for the same image by the same URL
+	// and gets whatever has arrived; a row whose badge has not landed yet draws the
+	// plain mark instead of an empty box, and picks the image up on a later frame.
 	const Bounds screen = ui->GetBounds();
-	const float width = std::min(520.0f, screen.w * 0.46f);
+	const float width = std::min(560.0f, screen.w * 0.46f);
 	const float x = screen.w - width;
 	const float pad = 30.0f;
 	const float inner = width - pad * 2.0f;
@@ -270,24 +290,59 @@ extern "C" void PS5_DrawAchievementsBar(UIContext *ui) {
 	y += 14.0f;
 
 	// ---- the list ----
+	//
+	// A description is a sentence, and a sentence does not fit on one line beside
+	// a badge. Every row wraps its description, so a row is as tall as its own
+	// text needs - the focused one included, which is the one being read.
 	const float top = y;
-	const float rowHeight = 86.0f;
+	const float badgeSize = 56.0f;
 	const float headerHeight = 34.0f;
+	const float textX = x + pad + badgeSize + 16.0f;
+	const float textW = width - (textX - x) - pad - 54.0f;
 	const int rows = (int)psp5::g_rows.size();
-	const int visible = std::max(1, (int)((screen.h - top - pad) / rowHeight));
-	int first = std::clamp(psp5::g_row - visible / 2, 0, std::max(0, rows - visible));
+
+	const auto row_height = [&](const psp5::Row &row) {
+		if (row.header) {
+			return headerHeight;
+		}
+		float w = 0.0f;
+		float h = 0.0f;
+		ui->MeasureTextRect(ui->GetTheme().uiFont, 0.6f, 0.6f, row.detail, textW + 40.0f, &w, &h,
+		                    ALIGN_LEFT | FLAG_WRAP_TEXT);
+		float height = 16.0f + 26.0f + h + 14.0f;
+		if (!row.measure.empty()) {
+			height += 22.0f;
+		}
+		return std::max(badgeSize + 24.0f, height);
+	};
+
+	// Enough of the list is skipped to keep the focused row on screen. Heights
+	// vary, so the first visible row is found by walking back from the cursor
+	// until the rows below it fill the bar.
+	const float space = screen.h - top - pad;
+	int first = psp5::g_row;
+	float used = rows > 0 ? row_height(psp5::g_rows[(std::size_t)psp5::g_row]) : 0.0f;
+	while (first > 0) {
+		const float next = row_height(psp5::g_rows[(std::size_t)(first - 1)]);
+		if (used + next > space) {
+			break;
+		}
+		used += next;
+		--first;
+	}
 
 	for (int i = first; i < rows && y < screen.h - pad; ++i) {
 		const psp5::Row &row = psp5::g_rows[(std::size_t)i];
 		const bool focused = i == psp5::g_row;
+		const float height = row_height(row);
 
 		if (row.header) {
 			ui->SetFontScale(0.56f, 0.56f);
 			ui->DrawTextRect(row.label, Bounds(x + pad, y, inner - 60.0f, headerHeight),
 			                 psp5::kInkDim, ALIGN_LEFT | ALIGN_VCENTER);
 			if (!row.value.empty()) {
-				ui->DrawTextRect(row.value, Bounds(x + width - pad - 56.0f, y, 56.0f,
-				                                   headerHeight),
+				ui->DrawTextRect(row.value,
+				                 Bounds(x + width - pad - 56.0f, y, 56.0f, headerHeight),
 				                 psp5::kInkFaint, ALIGN_RIGHT | ALIGN_VCENTER);
 			}
 			y += headerHeight;
@@ -295,49 +350,67 @@ extern "C" void PS5_DrawAchievementsBar(UIContext *ui) {
 		}
 
 		if (focused) {
-			ui->FillRect(UI::Drawable(0x18FFFFFF), Bounds(x + 1.0f, y, width - 1.0f, rowHeight));
-			ui->FillRect(UI::Drawable(psp5::kAccent), Bounds(x, y, 3.0f, rowHeight));
+			ui->FillRect(UI::Drawable(0x18FFFFFF), Bounds(x + 1.0f, y, width - 1.0f, height));
+			ui->FillRect(UI::Drawable(psp5::kAccent), Bounds(x, y, 3.0f, height));
 		}
 
-		// The mark: filled when earned, an empty ring when not, as a trophy
-		// list shows one earned and one still to get.
-		const float mark = 54.0f;
-		const Bounds badge(x + pad, y + (rowHeight - mark) * 0.5f, mark, mark);
-		if (row.unlocked) {
-			psp5::FillRound(ui, badge, 12.0f, psp5::kPrimary);
-			// A tick, as two strokes.
-			ui->FillRect(UI::Drawable(psp5::kPage),
-			             Bounds(badge.x + 16.0f, badge.y + 27.0f, 10.0f, 4.0f));
-			ui->FillRect(UI::Drawable(psp5::kPage),
-			             Bounds(badge.x + 24.0f, badge.y + 19.0f, 4.0f, 14.0f));
-		} else {
-			psp5::FillRoundOutlined(ui, badge, 12.0f, psp5::kPage, psp5::kOutline, 2.0f);
+		const Bounds badge(x + pad, y + 14.0f, badgeSize, badgeSize);
+		bool drew = false;
+		if (!row.badge.empty() && g_iconCache.BindIconTexture(ui, row.badge)) {
+			ui->Draw()->DrawTexRect(badge, 0.0f, 0.0f, 1.0f, 1.0f,
+			                        row.unlocked ? 0xFFFFFFFF : 0xB0FFFFFF);
+			ui->Flush();
+			ui->RebindTexture();
+			drew = true;
+		}
+		if (!drew) {
+			// Until the image arrives: filled when earned, an empty ring when not.
+			if (row.unlocked) {
+				psp5::FillRound(ui, badge, 12.0f, psp5::kPrimary);
+				ui->FillRect(UI::Drawable(psp5::kPage),
+				             Bounds(badge.x + 16.0f, badge.y + 29.0f, 10.0f, 4.0f));
+				ui->FillRect(UI::Drawable(psp5::kPage),
+				             Bounds(badge.x + 24.0f, badge.y + 21.0f, 4.0f, 14.0f));
+			} else {
+				psp5::FillRoundOutlined(ui, badge, 12.0f, psp5::kPage, psp5::kOutline, 2.0f);
+			}
 		}
 
-		const float textX = badge.x + mark + 16.0f;
-		float textW = width - (textX - x) - pad - 54.0f;
-
+		float ty = y + 14.0f;
+		ui->SetFontStyle(ui->GetTheme().uiFont);
 		ui->SetFontScale(0.74f, 0.74f);
-		ui->DrawTextRect(row.label, Bounds(textX, y + 16.0f, textW, 24.0f),
+		ui->DrawTextRect(row.label, Bounds(textX, ty, textW, 24.0f),
 		                 row.unlocked ? psp5::kInk : psp5::kInkDim, ALIGN_LEFT | ALIGN_TOP);
 		if (!row.value.empty()) {
 			ui->SetFontScale(0.62f, 0.62f);
-			ui->DrawTextRect(row.value, Bounds(x + width - pad - 50.0f, y + 18.0f, 50.0f, 22.0f),
+			ui->DrawTextRect(row.value, Bounds(x + width - pad - 50.0f, ty + 2.0f, 50.0f, 22.0f),
 			                 psp5::kInkFaint, ALIGN_RIGHT | ALIGN_TOP);
 		}
+		ty += 26.0f;
 		if (!row.detail.empty()) {
+			float w = 0.0f;
+			float h = 0.0f;
 			ui->SetFontScale(0.6f, 0.6f);
-			ui->DrawTextRect(row.detail, Bounds(textX, y + 42.0f, textW + 40.0f, 20.0f),
-			                 psp5::kInkFaint, ALIGN_LEFT | ALIGN_TOP);
+			ui->MeasureTextRect(ui->GetTheme().uiFont, 0.6f, 0.6f, row.detail, textW + 40.0f, &w,
+			                    &h, ALIGN_LEFT | FLAG_WRAP_TEXT);
+			ui->DrawTextRect(row.detail, Bounds(textX, ty, textW + 40.0f, h), psp5::kInkFaint,
+			                 ALIGN_LEFT | ALIGN_TOP | FLAG_WRAP_TEXT);
+			ty += h + 4.0f;
+		}
+		if (!row.measure.empty()) {
+			ui->SetFontScale(0.58f, 0.58f);
+			ui->DrawTextRect(row.measure, Bounds(textX, ty, textW + 40.0f, 18.0f), psp5::kInkDim,
+			                 ALIGN_LEFT | ALIGN_TOP);
+			ty += 18.0f;
 		}
 		if (row.progress > 0.0f && !row.unlocked) {
-			psp5::DrawMeter(ui, Bounds(textX, y + rowHeight - 20.0f, textW, 4.0f), row.progress,
+			psp5::DrawMeter(ui, Bounds(textX, y + height - 14.0f, textW, 4.0f), row.progress,
 			                psp5::kAccent);
 		}
 
 		ui->FillRect(UI::Drawable(psp5::kOutline),
-		             Bounds(x + pad, y + rowHeight - 1.0f, inner, 1.0f));
-		y += rowHeight;
+		             Bounds(x + pad, y + height - 1.0f, inner, 1.0f));
+		y += height;
 	}
 
 	ui->SetFontScale(1.0f, 1.0f);

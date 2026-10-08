@@ -93,12 +93,20 @@ bool MenuSoundsEnabled() {
 // its achievements client when the setting is on, and the setting it just read
 // knows nothing about psp5's.
 void ApplyAchievementsPreference() {
-	if (!prefs::achievements() || g_Config.bAchievementsEnable) {
+	if (!prefs::achievements()) {
 		return;
 	}
+	// UpdateSettings is what builds the rcheevos client, and it is what logs the
+	// player back in from the token saved under PSP/SYSTEM. It has to be called
+	// even when bAchievementsEnable is already true in ppsspp.ini - that flag
+	// says what the player wants, not that the client exists, and on the home
+	// screen nothing else creates one. Skipping it here was why a player who had
+	// signed in was told they were not: the token was on disk, but there was no
+	// client to present it.
 	g_Config.bAchievementsEnable = true;
 	Achievements::UpdateSettings();
-	psp5::Trace("achievements: on, from psp5's own settings");
+	psp5::Trace("achievements: on, from psp5's own settings; client %s",
+	            Achievements::GetClient() ? "ready" : "not created");
 }
 
 // Asked by PPSSPP as a game boots (see tools/mkpatch.py): whether achievements
@@ -117,6 +125,17 @@ std::string PlayedTime(const std::string &discId) {
 		return std::string();
 	}
 	return text;
+}
+
+// The one phrase both the hero and the details sheet use, so the two cannot
+// drift apart. PPSSPP's own string is a duration ("1h 23m"), not a count of
+// hours, so the label carries the sense and the value carries the figure.
+std::string PlayedLabel(const std::string &discId) {
+	const std::string played = PlayedTime(discId);
+	if (played.empty()) {
+		return "Not played yet";
+	}
+	return "Hours Played  Â·  " + played;
 }
 
 bool HasSaveState(const std::string &discId) {
@@ -225,6 +244,7 @@ void AchievementsLogin(const std::string &user, const std::string &password) {
 }
 
 void AchievementsLogout() {
+	psp5::Trace("achievements: signing out %s", g_Config.sAchievementsUserName.c_str());
 	prefs::setAchievements(false);
 	Achievements::Logout();
 	g_Config.Save("psp5 achievements");

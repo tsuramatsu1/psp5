@@ -70,6 +70,21 @@ const std::string kQuitLabel = "Close PSP5";
 const std::string kCheatsEnabledLabel = "Cheats enabled";
 const std::string kOverridesLabel = "Settings for this game";
 const std::string kAchievementsLabel = "RetroAchievements";
+// The RetroAchievements dialogs - signing in, and signing out - are the same
+// card at the same size. Their height is built from what is in them rather than
+// written down twice: the body runs to two lines, and the buttons sit below it.
+// Both were 280 and 300 tall, which put the second line of the body straight
+// through the buttons.
+constexpr float kDialogW = 780.0f;
+constexpr float kDialogPad = 48.0f;
+constexpr float kDialogBody = 178.0f;   // first baseline of the body text
+constexpr float kDialogLine = 34.0f;    // and its line height, over two lines
+constexpr float kDialogButton = 62.0f;
+constexpr float kDialogH = kDialogBody + kDialogLine + 12.0f  // the body's last descender
+                           + 30.0f                            // air under it
+                           + kDialogButton + 36.0f;           // the buttons, and the foot
+constexpr float kDialogButtonY = kDialogH - 36.0f - kDialogButton;
+
 constexpr float kShelfY = 730.0f;     // top of the focused shelf's cards
 constexpr float kShelfPitch = 304.0f; // distance between shelves
 // Play, Resume, Cheats, Close. Resume is always on the list rather than
@@ -153,11 +168,28 @@ class Aurora final : public app::Concept
         // an open panel.
         if (sign_out_asking_)
         {
+            // Left picks Sign out, right picks Cancel - where each sits, rather
+            // than a step from wherever the cursor is. With two buttons a step
+            // is a toggle, and nav repeats while a direction is held: holding
+            // the stick made the choice flicker between them, so the button let
+            // go on was not reliably the one being pointed at. Signing out by
+            // accident is the expensive way to be wrong, so this does not guess.
             if (input.nav == Direction::left || input.nav == Direction::right)
             {
-                const int next = sign_out_button_ == 0 ? 1 : 0;
-                sign_out_button_ = next;
-                feedback.play(audio::Cue::focus, 1.0f, 0.0f);
+                const int next = input.nav == Direction::left ? 0 : 1;
+                if (next != sign_out_button_)
+                {
+                    sign_out_button_ = next;
+                    feedback.play(audio::Cue::focus, 1.0f, 0.0f);
+                }
+            }
+            // The Cross that opened this is most likely still down. Nothing is
+            // answered until it has been let go, so the press that asked the
+            // question cannot also answer it.
+            if (!sign_out_armed_)
+            {
+                sign_out_armed_ = !input.is_held(Action::confirm);
+                return;
             }
             if (input.is_pressed(Action::confirm))
             {
@@ -542,7 +574,11 @@ class Aurora final : public app::Concept
         const ui::Fonts &fonts = context_.fonts;
         list.rounded_rect({0, 0, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0,
                           Color::rgb(0x05070f, 0.76f));
-        const Rect card{(gfx::kVirtualWidth - 780.0f) * 0.5f, 400.0f, 780.0f, 280.0f};
+        const std::string message =
+            "Signing out as " + psp5::AchievementsUser() +
+            ". Games will stop awarding achievements until you sign in again.";
+        const DialogBox box = dialog_box(message);
+        const Rect card = box.card;
         list.shadow({card.x, card.y + 18, card.w, card.h}, 36, 48, Color::rgb(0x000000, 0.55f));
         list.rounded_rect(card, 28, Color::rgb(0x000000));
         list.bordered_rect(card, 28, Color::rgb(0x000000, 0.0f), 2, kWhite.with_alpha(0.32f));
@@ -550,20 +586,18 @@ class Aurora final : public app::Concept
         ui::text(list, fonts.semibold, "RETROACHIEVEMENTS", card.x + 48, card.y + 62, 20,
                  palette_[3].value(), gfx::Align::left, 4.0f);
         ui::text(list, fonts.display, "Sign out?", card.x + 46, card.y + 128, 46, kWhite);
-        ui::paragraph(list, fonts.regular,
-                      "Signing out as " + psp5::AchievementsUser() +
-                          ". Games will stop awarding achievements until you sign in again.",
-                      card.x + 48, card.y + 178, 25, card.w - 96.0f, 34,
-                      kWhite.with_alpha(0.78f), 2);
+        ui::paragraph(list, fonts.regular, message, card.x + kDialogPad, box.body, kDialogText,
+                      card.w - kDialogPad * 2.0f, kDialogLine, kWhite.with_alpha(0.78f),
+                      kDialogMaxLines);
 
         const char *labels[2] = {"Sign out", "Cancel"};
         const float width = 200.0f;
         const float gap = 16.0f;
-        float x = card.x + card.w - 48.0f - 2.0f * width - gap;
+        float x = card.x + card.w - kDialogPad - 2.0f * width - gap;
         for (int i = 0; i < 2; ++i)
         {
             const bool focused = i == sign_out_button_;
-            const Rect button{x, card.y + card.h - 94.0f, width, 62.0f};
+            const Rect button{x, box.buttons, width, kDialogButton};
             if (focused)
             {
                 list.glow(button, 31, 18, palette_[3].value().with_alpha(0.3f));
@@ -590,9 +624,20 @@ class Aurora final : public app::Concept
         const ui::Fonts &fonts = context_.fonts;
         const bool working = state == psp5::SignIn::working;
         const bool good = state == psp5::SignIn::succeeded;
+        std::string detail;
+        if (working)
+            detail = "Talking to the server.";
+        else if (good)
+            detail = "Signed in as " + psp5::AchievementsUser() + ". Games will award "
+                                                                  "achievements as you play.";
+        else
+            detail = "The server did not accept it. Check the username and password, and that "
+                     "the console is online.";
+
         list.rounded_rect({0, 0, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0,
                           Color::rgb(0x05070f, 0.76f));
-        const Rect card{(gfx::kVirtualWidth - 780.0f) * 0.5f, 390.0f, 780.0f, 300.0f};
+        const DialogBox box = dialog_box(detail);
+        const Rect card = box.card;
         list.shadow({card.x, card.y + 18, card.w, card.h}, 36, 48, Color::rgb(0x000000, 0.55f));
         list.rounded_rect(card, 28, Color::rgb(0x000000));
         list.bordered_rect(card, 28, Color::rgb(0x000000, 0.0f), 2,
@@ -606,28 +651,21 @@ class Aurora final : public app::Concept
                                        : "Could not sign in";
         ui::text(list, fonts.display, heading, card.x + 46, card.y + 128, 46, kWhite);
 
-        std::string detail;
-        if (working)
-            detail = "Talking to the server.";
-        else if (good)
-            detail = "Signed in as " + psp5::AchievementsUser() + ". Games will award "
-                                                                  "achievements as you play.";
-        else
-            detail = "The server did not accept it. Check the username and password, and that "
-                     "the console is online.";
-        ui::paragraph(list, fonts.regular, detail, card.x + 48, card.y + 178, 25, card.w - 96.0f,
-                      34, kWhite.with_alpha(0.78f), 2);
+        ui::paragraph(list, fonts.regular, detail, card.x + kDialogPad, box.body, kDialogText,
+                      card.w - kDialogPad * 2.0f, kDialogLine, kWhite.with_alpha(0.78f),
+                      kDialogMaxLines);
 
         if (working)
         {
             // A bar that travels rather than fills: how long this takes is the
             // server's business, and a progress bar would be inventing one.
             const float width = 170.0f;
-            const float travel = card.w - 96.0f - width;
+            const float travel = card.w - kDialogPad * 2.0f - width;
             const float at = (std::sin(clock_ * 1.9f) * 0.5f + 0.5f) * travel;
-            list.rounded_rect({card.x + 48, card.y + card.h - 40, card.w - 96.0f, 4}, 2,
+            const float bar = box.buttons + kDialogButton * 0.5f - 2.0f;
+            list.rounded_rect({card.x + kDialogPad, bar, card.w - kDialogPad * 2.0f, 4}, 2,
                               kWhite.with_alpha(0.14f));
-            list.rounded_rect({card.x + 48 + at, card.y + card.h - 40, width, 4}, 2,
+            list.rounded_rect({card.x + kDialogPad + at, bar, width, 4}, 2,
                               palette_[3].value());
             return;
         }
@@ -638,11 +676,12 @@ class Aurora final : public app::Concept
         const char *labels[2] = {retry ? "Retry" : "Close", "Close"};
         const float width = 200.0f;
         const float gap = 16.0f;
-        float x = card.x + card.w - 48.0f - (float)count * width - (float)(count - 1) * gap;
+        float x = card.x + card.w - kDialogPad - (float)count * width
+                  - (float)(count - 1) * gap;
         for (int i = 0; i < count; ++i)
         {
             const bool focused = i == sign_in_button_;
-            const Rect button{x, card.y + card.h - 94.0f, width, 62.0f};
+            const Rect button{x, box.buttons, width, kDialogButton};
             if (focused)
             {
                 list.glow(button, 31, 18, palette_[3].value().with_alpha(0.3f));
@@ -731,6 +770,7 @@ class Aurora final : public app::Concept
                     // Asked, not done: the row shows the account, so pressing it
                     // reads as opening it rather than as leaving it.
                     sign_out_asking_ = true;
+                    sign_out_armed_ = false;
                     sign_out_button_ = 1;  // Cancel, so a second press changes nothing
                     feedback.play(audio::Cue::open);
                 }
@@ -1186,10 +1226,8 @@ class Aurora final : public app::Concept
         ui::text(list, fonts.regular, text, x, 358, 26, kWhite.with_alpha(0.78f));
         // The path was only ever useful for finding a file. How long it has been
         // played is what a shelf is usually asked.
-        const std::string played = psp5::PlayedTime(file.disc_id);
-        ui::text(list, fonts.regular,
-                 played.empty() ? std::string("Not played yet") : "Played for " + played, x, 420,
-                 26, kWhite.with_alpha(0.7f));
+        ui::text(list, fonts.regular, psp5::PlayedLabel(file.disc_id), x, 420, 26,
+                 kWhite.with_alpha(0.7f));
 
         const Rect play{x, 540, 220, 64};
         list.glow(play, 32, 18, it.accent.with_alpha(0.35f));
@@ -1313,12 +1351,12 @@ class Aurora final : public app::Concept
         ui::text(list, fonts.semibold, ui::upper(it.genre), x, sheet.y + 92, 20, it.accent,
                  gfx::Align::left, 4.0f);
         ui::text(list, fonts.display, it.title, x - 2, sheet.y + 156, 60, kWhite);
-        ui::paragraph(list, fonts.regular, it.blurb, x, sheet.y + 208, 25, 700, 36,
-                      kWhite.with_alpha(0.82f), 2);
+        const psp5::GameEntry &file = entry(focused_item());
+        ui::text(list, fonts.regular, psp5::PlayedLabel(file.disc_id), x, sheet.y + 226, 26,
+                 kWhite.with_alpha(0.82f));
 
         // Three stat tiles. The kit gauged a rating here; these state what the
         // file is, which is what psp5 actually knows about it.
-        const psp5::GameEntry &file = entry(focused_item());
         const float tiles_y = sheet.y + 300;
         const char *labels[] = {"FORMAT", "SIZE", "ADDED"};
         const std::string values[] = {file.format, file.size_text, file.date_text};
@@ -1496,6 +1534,7 @@ class Aurora final : public app::Concept
     Typing typing_ = Typing::none;                 // which answer the keyboard is taking
     int sign_in_button_ = 0;                       // the focused button of the sign-in dialog
     bool sign_out_asking_ = false;                 // the sign-out dialog is up
+    bool sign_out_armed_ = false;                  // ... and the pad has been let go since
     int sign_out_button_ = 1;
     std::string typed_user_;
     int row_ = 0;

@@ -96,6 +96,7 @@ bool MenuSoundsEnabled();
 // How long this game has been played, worded as PPSSPP words it, or empty if it
 // has never been started. PPSSPP keeps this per game id in its own config.
 std::string PlayedTime(const std::string &discId);
+std::string PlayedLabel(const std::string &discId);
 
 // Whether this game has a save state to pick up from.
 bool HasSaveState(const std::string &discId);
