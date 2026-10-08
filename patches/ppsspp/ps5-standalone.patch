@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e18a1387..0cfa824a0 100644
+index 8e18a1387..2230a2173 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -282,6 +282,22 @@ endif()
+@@ -282,6 +282,27 @@ endif()
  if(NOT ANDROID AND NOT WIN32 AND (NOT APPLE OR IOS))
  	set(HTTPS_NOT_AVAILABLE ON)
  endif()
@@ -16,6 +16,11 @@ index 8e18a1387..0cfa824a0 100644
 +	if(NOT EXISTS "${PSP5_CURL_PREFIX}/include/curl/curl.h")
 +		message(FATAL_ERROR "no curl headers under ${PSP5_CURL_PREFIX}; set PSP5_CURL_PREFIX")
 +	endif()
++	# psp5 has an https transport of its own (src/net), so anything that asks
++	# "can this build reach a server" has something true to test. Not
++	# HTTPS_NOT_AVAILABLE, which stays defined on purpose: it is what keeps
++	# naett out of the build.
++	add_compile_definitions(PSP5_HAVE_HTTPS)
 +	# Deliberately not include_directories(): that prefix also carries a libpng,
 +	# and putting it in front of everything made PPSSPP compile against libpng16
 +	# while linking against its own bundled libpng17 - which only showed up as
@@ -25,7 +30,7 @@ index 8e18a1387..0cfa824a0 100644
  
  # Made this flag negative because it's hopefully quite temporary and didn't
  # want to have to update all build systems.
-@@ -1506,6 +1522,21 @@ elseif(WIN32)
+@@ -1506,6 +1527,21 @@ elseif(WIN32)
  	# Don't care about SDL.
  	set(TargetBin PPSSPPWindows)
  elseif(LIBRETRO)
@@ -47,7 +52,7 @@ index 8e18a1387..0cfa824a0 100644
  else()
  	if(GOLD)
  		set(TargetBin PPSSPPGold)
-@@ -3031,6 +3062,75 @@ if(LIBRETRO)
+@@ -3031,6 +3067,76 @@ if(LIBRETRO)
  	add_subdirectory(libretro)
  endif()
  
@@ -107,6 +112,7 @@ index 8e18a1387..0cfa824a0 100644
 +			${PSP5_SRC_DIR}/ui/PS5GameLibrary.cpp
 +			${PSP5_SRC_DIR}/ui/PS5GameSound.cpp
 +			${PSP5_SRC_DIR}/ui/PS5Keyboard.cpp
++			${PSP5_SRC_DIR}/ui/PS5Prefs.cpp
 +			${PSP5_SRC_DIR}/ui/PS5Cheats.cpp
 +			${PSP5_SRC_DIR}/ui/PS5Settings.cpp
 +			${PSP5_SRC_DIR}/ui/kit/aurora.cpp

@@ -66,7 +66,7 @@ constexpr float kCardGap = 26.0f;
 constexpr float kCardGrow = 1.2f;     // focused card scale
 constexpr int kViews = static_cast<int>(psp5::GameView::count); // tabs along the top
 // The last row of the settings panel, which is not a setting.
-const std::string kQuitLabel = "Close psp5";
+const std::string kQuitLabel = "Close PSP5";
 const std::string kCheatsEnabledLabel = "Cheats enabled";
 const std::string kOverridesLabel = "Settings for this game";
 const std::string kAchievementsLabel = "RetroAchievements";
@@ -148,6 +148,76 @@ class Aurora final : public app::Concept
         // that depends on there being a game to focus. Not while the details
         // sheet is up, though: there L1/R1 would move the screen out from under
         // an open panel.
+        if (sign_out_asking_)
+        {
+            if (input.nav == Direction::left || input.nav == Direction::right)
+            {
+                const int next = sign_out_button_ == 0 ? 1 : 0;
+                sign_out_button_ = next;
+                feedback.play(audio::Cue::focus, 1.0f, 0.0f);
+            }
+            if (input.is_pressed(Action::confirm))
+            {
+                if (sign_out_button_ == 0)
+                {
+                    psp5::AchievementsLogout();
+                    feedback.play(audio::Cue::back);
+                }
+                sign_out_asking_ = false;
+            }
+            else if (input.is_pressed(Action::back))
+            {
+                sign_out_asking_ = false;
+                feedback.play(audio::Cue::back);
+            }
+            return;
+        }
+
+        if (psp5::AchievementsSignIn() != psp5::SignIn::idle)
+        {
+            // The dialog has the pad while it is up, and it does not close
+            // itself: a result worth showing is worth waiting to be read.
+            const int count = sign_in_buttons();
+            if (count == 0)
+                return;  // still talking to the server
+
+            if (input.nav == Direction::left || input.nav == Direction::right)
+            {
+                const int next =
+                    std::clamp(sign_in_button_ + (input.nav == Direction::right ? 1 : -1), 0,
+                               count - 1);
+                if (next != sign_in_button_)
+                {
+                    sign_in_button_ = next;
+                    feedback.play(audio::Cue::focus, 1.0f, 0.0f);
+                }
+            }
+            const bool retry = sign_in_button_ == 0 &&
+                               psp5::AchievementsSignIn() == psp5::SignIn::failed &&
+                               psp5::CanRetryAchievementsSignIn();
+            if (input.is_pressed(Action::confirm))
+            {
+                if (retry)
+                {
+                    psp5::RetryAchievementsSignIn();
+                    feedback.play(audio::Cue::open);
+                }
+                else
+                {
+                    psp5::ClearAchievementsSignIn();
+                    feedback.play(audio::Cue::back);
+                }
+                sign_in_button_ = 0;
+            }
+            else if (input.is_pressed(Action::back))
+            {
+                psp5::ClearAchievementsSignIn();
+                feedback.play(audio::Cue::back);
+                sign_in_button_ = 0;
+            }
+            return;
+        }
+
         // The keyboard is over everything and has the pad to itself: a press
         // that typed a letter must not also move the shelf behind it.
         if (psp5::KeyboardPanel().open())
@@ -241,6 +311,8 @@ class Aurora final : public app::Concept
             draw_shelves(list);
         }
         list.pop_transform();
+        draw_sign_in(list);
+        draw_sign_out(list);
         psp5::KeyboardPanel().Draw(list, context_.fonts, palette_[3].value());
         if (back > 0.01f)
             list.rounded_rect({0, 0, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0,
@@ -448,6 +520,143 @@ class Aurora final : public app::Concept
         achievement_password,
     };
 
+    // What the server is doing, while it is doing it. The sign-in happens on
+    // another thread and can take a few seconds; with nothing on screen it
+    // looked as though the password had simply been dropped.
+    // How many buttons the dialog is showing, and what they do.
+    int sign_in_buttons() const
+    {
+        const psp5::SignIn state = psp5::AchievementsSignIn();
+        if (state == psp5::SignIn::failed)
+            return psp5::CanRetryAchievementsSignIn() ? 2 : 1;
+        return state == psp5::SignIn::succeeded ? 1 : 0;
+    }
+
+    void draw_sign_out(gfx::DrawList &list) const
+    {
+        if (!sign_out_asking_)
+            return;
+        const ui::Fonts &fonts = context_.fonts;
+        list.rounded_rect({0, 0, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0,
+                          Color::rgb(0x05070f, 0.76f));
+        const Rect card{(gfx::kVirtualWidth - 780.0f) * 0.5f, 400.0f, 780.0f, 280.0f};
+        list.shadow({card.x, card.y + 18, card.w, card.h}, 36, 48, Color::rgb(0x000000, 0.55f));
+        list.rounded_rect(card, 28, Color::rgb(0x000000));
+        list.bordered_rect(card, 28, Color::rgb(0x000000, 0.0f), 2, kWhite.with_alpha(0.32f));
+
+        ui::text(list, fonts.semibold, "RETROACHIEVEMENTS", card.x + 48, card.y + 62, 20,
+                 palette_[3].value(), gfx::Align::left, 4.0f);
+        ui::text(list, fonts.display, "Sign out?", card.x + 46, card.y + 128, 46, kWhite);
+        ui::paragraph(list, fonts.regular,
+                      "Signing out as " + psp5::AchievementsUser() +
+                          ". Games will stop awarding achievements until you sign in again.",
+                      card.x + 48, card.y + 178, 25, card.w - 96.0f, 34,
+                      kWhite.with_alpha(0.78f), 2);
+
+        const char *labels[2] = {"Sign out", "Cancel"};
+        const float width = 200.0f;
+        const float gap = 16.0f;
+        float x = card.x + card.w - 48.0f - 2.0f * width - gap;
+        for (int i = 0; i < 2; ++i)
+        {
+            const bool focused = i == sign_out_button_;
+            const Rect button{x, card.y + card.h - 94.0f, width, 62.0f};
+            if (focused)
+            {
+                list.glow(button, 31, 18, palette_[3].value().with_alpha(0.3f));
+                list.rounded_rect(button, 31, kWhite);
+            }
+            else
+            {
+                list.bordered_rect(button, 31, kWhite.with_alpha(0.06f), 2,
+                                   kWhite.with_alpha(0.3f));
+            }
+            ui::text(list, fonts.semibold, labels[i], button.cx(), button.cy() + 9, 26,
+                     focused ? Color::rgb(0x0b0d16) : kWhite.with_alpha(0.9f),
+                     gfx::Align::center);
+            x += width + gap;
+        }
+    }
+
+    void draw_sign_in(gfx::DrawList &list) const
+    {
+        const psp5::SignIn state = psp5::AchievementsSignIn();
+        if (state == psp5::SignIn::idle)
+            return;
+
+        const ui::Fonts &fonts = context_.fonts;
+        const bool working = state == psp5::SignIn::working;
+        const bool good = state == psp5::SignIn::succeeded;
+        list.rounded_rect({0, 0, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0,
+                          Color::rgb(0x05070f, 0.76f));
+        const Rect card{(gfx::kVirtualWidth - 780.0f) * 0.5f, 390.0f, 780.0f, 300.0f};
+        list.shadow({card.x, card.y + 18, card.w, card.h}, 36, 48, Color::rgb(0x000000, 0.55f));
+        list.rounded_rect(card, 28, Color::rgb(0x000000));
+        list.bordered_rect(card, 28, Color::rgb(0x000000, 0.0f), 2,
+                           kWhite.with_alpha(working ? 0.18f : 0.32f));
+
+        ui::text(list, fonts.semibold, "RETROACHIEVEMENTS", card.x + 48, card.y + 62, 20,
+                 palette_[3].value(), gfx::Align::left, 4.0f);
+
+        const char *heading = working  ? "Signing in"
+                              : good   ? "Signed in"
+                                       : "Could not sign in";
+        ui::text(list, fonts.display, heading, card.x + 46, card.y + 128, 46, kWhite);
+
+        std::string detail;
+        if (working)
+            detail = "Talking to the server.";
+        else if (good)
+            detail = "Signed in as " + psp5::AchievementsUser() + ". Games will award "
+                                                                  "achievements as you play.";
+        else
+            detail = "The server did not accept it. Check the username and password, and that "
+                     "the console is online.";
+        ui::paragraph(list, fonts.regular, detail, card.x + 48, card.y + 178, 25, card.w - 96.0f,
+                      34, kWhite.with_alpha(0.78f), 2);
+
+        if (working)
+        {
+            // A bar that travels rather than fills: how long this takes is the
+            // server's business, and a progress bar would be inventing one.
+            const float width = 170.0f;
+            const float travel = card.w - 96.0f - width;
+            const float at = (std::sin(clock_ * 1.9f) * 0.5f + 0.5f) * travel;
+            list.rounded_rect({card.x + 48, card.y + card.h - 40, card.w - 96.0f, 4}, 2,
+                              kWhite.with_alpha(0.14f));
+            list.rounded_rect({card.x + 48 + at, card.y + card.h - 40, width, 4}, 2,
+                              palette_[3].value());
+            return;
+        }
+
+        // The dialog waits: it says what happened and stays until it is answered.
+        const int count = sign_in_buttons();
+        const bool retry = state == psp5::SignIn::failed && psp5::CanRetryAchievementsSignIn();
+        const char *labels[2] = {retry ? "Retry" : "Close", "Close"};
+        const float width = 200.0f;
+        const float gap = 16.0f;
+        float x = card.x + card.w - 48.0f - (float)count * width - (float)(count - 1) * gap;
+        for (int i = 0; i < count; ++i)
+        {
+            const bool focused = i == sign_in_button_;
+            const Rect button{x, card.y + card.h - 94.0f, width, 62.0f};
+            if (focused)
+            {
+                list.glow(button, 31, 18, palette_[3].value().with_alpha(0.3f));
+                list.rounded_rect(button, 31, kWhite);
+            }
+            else
+            {
+                list.bordered_rect(button, 31, kWhite.with_alpha(0.06f), 2,
+                                   kWhite.with_alpha(0.3f));
+            }
+            ui::text(list, fonts.semibold, labels[i], button.cx(), button.cy() + 9, 26,
+                     focused ? Color::rgb(0x0b0d16) : kWhite.with_alpha(0.9f),
+                     gfx::Align::center);
+            x += width + gap;
+        }
+    }
+
     void finish_typing(bool accepted)
     {
         const Typing was = typing_;
@@ -516,8 +725,11 @@ class Aurora final : public app::Concept
                 }
                 else if (psp5::AchievementsLoggedIn())
                 {
-                    psp5::AchievementsLogout();
-                    feedback.play(audio::Cue::back);
+                    // Asked, not done: the row shows the account, so pressing it
+                    // reads as opening it rather than as leaving it.
+                    sign_out_asking_ = true;
+                    sign_out_button_ = 1;  // Cancel, so a second press changes nothing
+                    feedback.play(audio::Cue::open);
                 }
                 else
                 {
@@ -812,7 +1024,7 @@ class Aurora final : public app::Concept
         // once every row is on it.
         const int at = setting_at(setting_);
         const char *hint =
-            quit_row(setting_)           ? "Closes psp5 and returns to the console."
+            quit_row(setting_)           ? "Closes PSP5 and returns to the console."
             : achievements_row(setting_)
                 ? (psp5::AchievementsAvailable()
                        ? "Signs in so games award achievements as you play."
@@ -1252,6 +1464,9 @@ class Aurora final : public app::Concept
     bool settings_open_ = false;                   // OPTIONS opened the settings panel
     int setting_ = 0;                              // its focused row
     Typing typing_ = Typing::none;                 // which answer the keyboard is taking
+    int sign_in_button_ = 0;                       // the focused button of the sign-in dialog
+    bool sign_out_asking_ = false;                 // the sign-out dialog is up
+    int sign_out_button_ = 1;
     std::string typed_user_;
     int row_ = 0;
     float age_ = 0.0f;   // seconds since enter(): drives the entrance

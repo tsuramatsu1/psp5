@@ -174,6 +174,7 @@ new = r"""if(PPSSPP_PS5)
 			${PSP5_SRC_DIR}/ui/PS5GameLibrary.cpp
 			${PSP5_SRC_DIR}/ui/PS5GameSound.cpp
 			${PSP5_SRC_DIR}/ui/PS5Keyboard.cpp
+			${PSP5_SRC_DIR}/ui/PS5Prefs.cpp
 			${PSP5_SRC_DIR}/ui/PS5Cheats.cpp
 			${PSP5_SRC_DIR}/ui/PS5Settings.cpp
 			${PSP5_SRC_DIR}/ui/kit/aurora.cpp
@@ -629,6 +630,11 @@ if(PPSSPP_PS5)
 	if(NOT EXISTS "${PSP5_CURL_PREFIX}/include/curl/curl.h")
 		message(FATAL_ERROR "no curl headers under ${PSP5_CURL_PREFIX}; set PSP5_CURL_PREFIX")
 	endif()
+	# psp5 has an https transport of its own (src/net), so anything that asks
+	# "can this build reach a server" has something true to test. Not
+	# HTTPS_NOT_AVAILABLE, which stays defined on purpose: it is what keeps
+	# naett out of the build.
+	add_compile_definitions(PSP5_HAVE_HTTPS)
 	# Deliberately not include_directories(): that prefix also carries a libpng,
 	# and putting it in front of everything made PPSSPP compile against libpng16
 	# while linking against its own bundled libpng17 - which only showed up as

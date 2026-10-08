@@ -32,6 +32,7 @@
 
 #include "PS5GameLibrary.h"
 #include "PS5GameSound.h"
+#include "PS5Prefs.h"
 #include "PS5Settings.h"
 
 // Defined by PPSSPP (patches/ppsspp/ps5-standalone.patch).
@@ -58,9 +59,13 @@ namespace {
 const char *const kFontDir = "/app0/ui/fonts";
 const char *const kSoundDir = "/app0/ui/sfx";
 
-// Aurora's sound set. The kit records two; a cue the set does not have falls
-// back to the other, and then to a synthesised tone.
-constexpr hui::audio::SoundSet kSoundSet = hui::audio::SoundSet::glass;
+// Which of the kit's two recorded sets the player chose. A cue a set does not
+// have falls back to the other, and then to a synthesised tone.
+hui::audio::SoundSet ChosenSoundSet() {
+	return psp5::prefs::soundSet() == psp5::prefs::SoundSet::paper
+	           ? hui::audio::SoundSet::paper
+	           : hui::audio::SoundSet::glass;
+}
 
 // The mixer renders on the console's audio thread and is posted to from the
 // frame loop, which is what it is built for: play_clip is the game-thread side
@@ -519,7 +524,7 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 		// sounds off leaves it playing.
 		if (psp5::MenuSoundsEnabled()) {
 			for (const hui::audio::CueEvent &cue : feedback.cues) {
-				bank.play(mixer, kSoundSet, cue);
+				bank.play(mixer, ChosenSoundSet(), cue);
 			}
 		}
 		GameSoundPlayer().Update(mixer, dt);

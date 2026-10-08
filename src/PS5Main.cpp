@@ -37,6 +37,7 @@
 #include "PS5Overlay.h"
 #include "PS5Log.h"
 #include "PS5Paths.h"
+#include "ui/PS5Prefs.h"
 #include "PS5VulkanContext.h"
 #include "ui/PS5AuroraLauncher.h"
 #include "platform/platform.h"
@@ -472,6 +473,8 @@ int main(int argc, char *argv[]) {
 	}
 
 	psp5::OpenTrace();
+	// Before the home screen is built, which reads them.
+	psp5::prefs::Load();
 	PS5Paths::Probe();
 
 	if (!pad_open()) {

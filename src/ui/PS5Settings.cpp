@@ -22,6 +22,7 @@
 #include "Core/RetroAchievements.h"
 
 #include "PS5Log.h"
+#include "ui/PS5Prefs.h"
 
 namespace psp5 {
 namespace {
@@ -84,7 +85,7 @@ Settings &SettingsPanel() {
 }
 
 bool MenuSoundsEnabled() {
-	return g_Config.iUIVolume > 0;
+	return prefs::soundSet() != prefs::SoundSet::off;
 }
 
 bool AchievementsLoggedIn() {
@@ -96,20 +97,67 @@ std::string AchievementsUser() {
 }
 
 bool AchievementsAvailable() {
-#ifdef HTTPS_NOT_AVAILABLE
-	// RetroAchievements' API is HTTPS only, and PPSSPP's HTTPS is naett, whose
-	// backends are WinHTTP, NSURLSession, libcurl and Java - none of which exist
-	// on a console. PPSSPP's own CMakeLists sets HTTPS_NOT_AVAILABLE for every
-	// platform that is not Windows, Apple or Android, and with it an https
-	// request returns a null handle and is never sent.
-	//
-	// The console has libSceHttp, libSceHttp2, libSceSsl and libSceNet, so this
-	// is reachable - it needs a transport written against them. Until then the
-	// panel says so rather than taking a password and losing it.
-	return false;
-#else
+	// Set by the build when psp5's own https transport is linked in - PacBrew's
+	// libcurl, driven from src/net. Not the absence of HTTPS_NOT_AVAILABLE,
+	// which stays defined on purpose: that flag is what keeps PPSSPP's own naett
+	// out of a build it cannot work in, and testing it reported no transport
+	// long after there was one.
+#ifdef PSP5_HAVE_HTTPS
 	return true;
+#else
+	return false;
 #endif
+}
+
+namespace {
+
+// Whether a sign-in has been asked for since the dialog was opened. Without it a
+// failure from some earlier attempt would be reported as if it were this one.
+bool g_signInAttempted = false;
+// The answer, once it has come, held until the player has seen it - otherwise
+// the dialog would vanish the instant it succeeded, which is the one moment
+// worth showing.
+SignIn g_signInResult = SignIn::idle;
+
+// Held only while the dialog is up, so Retry does not ask for the password
+// again. ClearAchievementsSignIn forgets them.
+std::string g_signInUser;
+std::string g_signInPassword;
+
+}  // namespace
+
+SignIn AchievementsSignIn() {
+	if (!g_signInAttempted) {
+		return SignIn::idle;
+	}
+	if (Achievements::IsBlockingExecution()) {
+		return SignIn::working;
+	}
+	if (g_signInResult == SignIn::working || g_signInResult == SignIn::idle) {
+		// It has come back. Which way is the only thing left to ask.
+		g_signInResult = Achievements::IsLoggedIn() ? SignIn::succeeded : SignIn::failed;
+	}
+	return g_signInResult;
+}
+
+void ClearAchievementsSignIn() {
+	g_signInAttempted = false;
+	g_signInResult = SignIn::idle;
+	g_signInUser.clear();
+	g_signInPassword.clear();
+}
+
+bool CanRetryAchievementsSignIn() {
+	return !g_signInUser.empty() && !g_signInPassword.empty();
+}
+
+void RetryAchievementsSignIn() {
+	if (!CanRetryAchievementsSignIn()) {
+		return;
+	}
+	const std::string user = g_signInUser;
+	const std::string password = g_signInPassword;
+	AchievementsLogin(user, password);
 }
 
 void AchievementsLogin(const std::string &user, const std::string &password) {
@@ -125,6 +173,10 @@ void AchievementsLogin(const std::string &user, const std::string &password) {
 	g_Config.bAchievementsEnable = true;
 	Achievements::UpdateSettings();
 	psp5::Trace("achievements: signing in as %s", user.c_str());
+	g_signInAttempted = true;
+	g_signInResult = SignIn::working;
+	g_signInUser = user;
+	g_signInPassword = password;
 	Achievements::LoginAsync(user.c_str(), password.c_str());
 	g_Config.Save("psp5 achievements");
 }
@@ -161,7 +213,7 @@ void Settings::Rebuild() {
 	items_.push_back({"Game volume", Format("%d", g_Config.iGameVolume),
 	                  "0 to 100, in steps of five."});
 
-	items_.push_back({"Menu sounds", MenuSoundsEnabled() ? "On" : "Off",
+	items_.push_back({"Menu sounds", prefs::soundSetName(prefs::soundSet()),
 	                  "The home screen's own sounds. A game's music is separate."});
 
 	items_.push_back({"Show frame rate",
@@ -274,11 +326,14 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			// VOLUMEHI_FULL is 100; five is a step a player can hear.
 			g_Config.iGameVolume = std::clamp(g_Config.iGameVolume + delta * 5, 0, VOLUMEHI_FULL);
 			break;
-		case 7:
-			// Off is silence; on is the volume PPSSPP ships with, since psp5
-			// offers no slider for it.
-			g_Config.iUIVolume = MenuSoundsEnabled() ? 0 : VOLUMEHI_FULL;
+		case 7: {
+			// Off, then each set the kit records. Which one suits is a matter of
+			// taste, so it is a choice rather than something psp5 decides.
+			const int count = 3;
+			const int at = ((int)prefs::soundSet() + (delta > 0 ? 1 : count - 1)) % count;
+			prefs::setSoundSet((prefs::SoundSet)at);
 			break;
+		}
 		case 8:
 			g_Config.iShowStatusFlags ^= (int)ShowStatusFlags::FPS_COUNTER;
 			break;

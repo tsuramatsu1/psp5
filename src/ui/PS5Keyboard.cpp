@@ -155,6 +155,7 @@ void Keyboard::Open(const std::string &title, const std::string &prompt,
 }
 
 void Keyboard::Move(int dx, int dy, hui::ui::Feedback &feedback) {
+	(void)feedback;
 	const Key &from = Info(key_);
 	if (dx != 0) {
 		// Along a row, a wide key is one step rather than as many steps as it is
@@ -168,43 +169,39 @@ void Keyboard::Move(int dx, int dy, hui::ui::Feedback &feedback) {
 		// so up and down are always each other's undo.
 		key_ = KeyAt(from.row + dy, column_);
 	}
-	feedback.play(hui::audio::Cue::focus, 1.0f, 0.0f);
 }
 
+// No sound: a key answers with the letter appearing, and a cue on every press
+// made typing a password sound like an alarm.
 void Keyboard::Press(int key, hui::ui::Feedback &feedback) {
+	(void)feedback;
 	const Key &info = Info(key);
 	switch (info.kind) {
 		case KeyKind::shift:
 			// Off, armed for one letter, then locked - the keyboards players
 			// already know.
 			shift_ = shift_ == 0 ? 1 : (shift_ == 1 ? 2 : 0);
-			feedback.play(hui::audio::Cue::toggle, 1.0f, 0.0f);
 			return;
 		case KeyKind::erase:
 			if (text_.empty()) {
-				feedback.play(hui::audio::Cue::error, 1.0f, 0.0f, 0.6f);
 				return;
 			}
 			text_.pop_back();
-			feedback.play(hui::audio::Cue::erase, 1.0f, 0.0f);
 			return;
 		case KeyKind::done:
 			accepted_ = true;
 			open_ = false;
-			feedback.play(hui::audio::Cue::select);
 			return;
 		default: break;
 	}
 
 	if (text_.size() >= kMaxLength) {
-		feedback.play(hui::audio::Cue::error, 1.0f, 0.0f, 0.6f);
 		return;
 	}
 	text_.push_back(shift_ ? info.upper : info.lower);
 	if (shift_ == 1) {
 		shift_ = 0;  // armed for one letter only
 	}
-	feedback.play(hui::audio::Cue::type, 1.0f, 0.0f);
 }
 
 bool Keyboard::Update(const hui::InputFrame &input, hui::ui::Feedback &feedback, bool *accepted) {
@@ -243,7 +240,6 @@ bool Keyboard::Update(const hui::InputFrame &input, hui::ui::Feedback &feedback,
 	if (input.is_pressed(Action::back)) {
 		accepted_ = false;
 		open_ = false;
-		feedback.play(hui::audio::Cue::back);
 	}
 
 	if (!open_) {

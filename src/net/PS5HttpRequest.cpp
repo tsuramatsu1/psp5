@@ -16,9 +16,13 @@
 #include "net/PS5HttpRequest.h"
 
 #include <atomic>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include <curl/curl.h>
 
@@ -28,6 +32,19 @@
 #include "PS5Log.h"
 #include "net/console_curl.h"
 
+// The SDK ships no headers for these. sceNetInit is declared as the payload
+// SDK's own http2_get sample declares it; the resolver calls are as
+// console_curl.c declares them, which is where they are already proven.
+extern "C" {
+int sceNetInit(void);
+int sceNetPoolCreate(const char *name, int size, int flags);
+int sceNetPoolDestroy(int pool);
+int sceNetResolverCreate(const char *name, int pool, int flags);
+int sceNetResolverStartNtoa(int resolver, const char *name, struct in_addr *address, int timeout,
+                            int retries, int flags);
+int sceNetResolverDestroy(int resolver);
+}
+
 namespace psp5 {
 namespace {
 
@@ -35,10 +52,101 @@ namespace {
 std::once_flag g_started;
 CURLcode g_startResult = CURLE_FAILED_INIT;
 
+// Where a name lookup actually fails. curl reports every one of them as
+// "Could not resolve hostname", which covers the network never having been
+// started, the pool not being made, and the server answering no - and those
+// want different fixes. This says which, once, in the title's own log.
+void ProbeResolver() {
+	const int pool = sceNetPoolCreate("psp5_dns_probe", 16 * 1024, 0);
+	if (pool < 0) {
+		psp5::Trace("net: resolver pool failed (0x%08x) - the network is not up", pool);
+		return;
+	}
+	const int resolver = sceNetResolverCreate("psp5_dns_probe", pool, 0);
+	if (resolver < 0) {
+		psp5::Trace("net: resolver failed (0x%08x)", resolver);
+		sceNetPoolDestroy(pool);
+		return;
+	}
+	struct in_addr address {};
+	const int found = sceNetResolverStartNtoa(resolver, "retroachievements.org", &address, 5000000,
+	                                          2, 0);
+	if (found < 0) {
+		psp5::Trace("net: retroachievements.org did not resolve (0x%08x) - the console's DNS "
+		            "answered no",
+		            found);
+	} else {
+		const unsigned char *o = (const unsigned char *)&address.s_addr;
+		psp5::Trace("net: retroachievements.org is %u.%u.%u.%u", o[0], o[1], o[2], o[3]);
+	}
+	sceNetResolverDestroy(resolver);
+	sceNetPoolDestroy(pool);
+}
+
+// The host of an http(s) URL, without the scheme, the port or the path.
+std::string HostOf(const std::string &url) {
+	const std::size_t scheme = url.find("://");
+	const std::size_t start = scheme == std::string::npos ? 0 : scheme + 3;
+	const std::size_t end = url.find_first_of("/:?#", start);
+	return url.substr(start, end == std::string::npos ? std::string::npos : end - start);
+}
+
+// Resolved hosts, so a run of requests to one server asks the console once.
+std::mutex g_addressLock;
+std::map<std::string, std::string> g_addresses;
+
+// The console's resolver, which works - unlike curl's own, which reports
+// "Could not resolve hostname" here even for a name the console resolves
+// perfectly well a line earlier in the log. curl runs its resolver on a thread
+// it starts itself, and this link wraps pthread_create for RADV's sake, which
+// is the likeliest reason it never gets an answer. Rather than unpick that,
+// psp5 looks the name up itself and hands curl the address.
+std::string Resolve(const std::string &host) {
+	{
+		std::lock_guard<std::mutex> lock(g_addressLock);
+		const auto found = g_addresses.find(host);
+		if (found != g_addresses.end()) {
+			return found->second;
+		}
+	}
+
+	std::string text;
+	const int pool = sceNetPoolCreate("psp5_dns", 16 * 1024, 0);
+	if (pool >= 0) {
+		const int resolver = sceNetResolverCreate("psp5_dns", pool, 0);
+		if (resolver >= 0) {
+			struct in_addr address {};
+			if (sceNetResolverStartNtoa(resolver, host.c_str(), &address, 5000000, 2, 0) >= 0) {
+				const unsigned char *o = (const unsigned char *)&address.s_addr;
+				char dotted[32];
+				std::snprintf(dotted, sizeof(dotted), "%u.%u.%u.%u", o[0], o[1], o[2], o[3]);
+				text = dotted;
+			}
+			sceNetResolverDestroy(resolver);
+		}
+		sceNetPoolDestroy(pool);
+	}
+	if (!text.empty()) {
+		std::lock_guard<std::mutex> lock(g_addressLock);
+		g_addresses[host] = text;
+	}
+	return text;
+}
+
 void StartCurl() {
 	std::call_once(g_started, [] {
+		// Before anything that resolves a name. The console's resolver is
+		// reached through sceNetPoolCreate (console_curl.c), and that fails
+		// until the network has been brought up - which showed up only as
+		// curl's "Could not resolve hostname" on every request, with no sign
+		// that the lookup had never had a pool to work in.
+		const int net = sceNetInit();
+		if (net < 0) {
+			psp5::Trace("net: sceNetInit failed (0x%08x); names will not resolve", net);
+		}
 		g_startResult = curl_global_init(CURL_GLOBAL_DEFAULT);
 		psp5::Trace("net: curl %s", g_startResult == CURLE_OK ? curl_version() : "failed to start");
+		ProbeResolver();
 	});
 }
 
@@ -116,6 +224,20 @@ private:
 			curl_easy_setopt(easy, CURLOPT_USERAGENT, userAgent_.c_str());
 		}
 
+		// The address, found by the console rather than by curl.
+		curl_slist *resolved = nullptr;
+		const std::string host = HostOf(url_);
+		const std::string address = host.empty() ? std::string() : Resolve(host);
+		if (!address.empty()) {
+			for (const char *port : {"443", "80"}) {
+				resolved = curl_slist_append(
+				    resolved, (host + ":" + port + ":" + address).c_str());
+			}
+			curl_easy_setopt(easy, CURLOPT_RESOLVE, resolved);
+		} else if (!host.empty()) {
+			psp5::Trace("net: %s did not resolve", host.c_str());
+		}
+
 		curl_slist *headers = nullptr;
 		if (acceptMime_) {
 			headers = curl_slist_append(headers, (std::string("Accept: ") + acceptMime_).c_str());
@@ -153,6 +275,9 @@ private:
 
 		if (headers) {
 			curl_slist_free_all(headers);
+		}
+		if (resolved) {
+			curl_slist_free_all(resolved);
 		}
 		curl_easy_cleanup(easy);
 		Finish(code != CURLE_OK || status >= 400);

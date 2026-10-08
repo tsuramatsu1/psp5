@@ -60,15 +60,28 @@ void Rebuild() {
 	g_rows.clear();
 	g_summary.clear();
 
+	// Four different situations used to share one message, which said the game
+	// was unsupported even when the truth was that nobody had signed in yet or
+	// the server had not answered. Each says what it is, and the log records
+	// the state behind it.
 	if (!Achievements::IsLoggedIn()) {
-		g_rows.push_back({"Not signed in", "Sign in from the home screen's settings.", "", false,
-		                  false, 0.0f});
+		g_rows.push_back({"Not signed in", "Sign in from the home screen's settings, then start "
+		                                   "the game again.",
+		                  "", false, false, 0.0f});
+		return;
+	}
+	if (Achievements::IsBlockingExecution()) {
+		g_rows.push_back({"Identifying this game", "Asking the server what it knows about it.", "",
+		                  false, false, 0.0f});
 		return;
 	}
 	if (!Achievements::IsActive()) {
-		g_rows.push_back(
-		    {"No achievements", "This game is not one RetroAchievements knows.", "", false, false,
-		     0.0f});
+		// A game is identified when it boots, so signing in afterwards leaves
+		// this one unidentified until it is started again.
+		g_rows.push_back({"No achievements for this game",
+		                  "Either RetroAchievements has none for it, or it was started before "
+		                  "you signed in - start it again.",
+		                  "", false, false, 0.0f});
 		return;
 	}
 
@@ -142,7 +155,9 @@ void ToggleAchievementsBar() {
 	g_since = 0.0f;
 	Rebuild();
 	g_open = true;
-	psp5::Trace("achievements: bar open, %u row(s)", (unsigned)g_rows.size());
+	psp5::Trace("achievements: bar open, %u row(s) - signed in %d, busy %d, game active %d",
+	            (unsigned)g_rows.size(), (int)Achievements::IsLoggedIn(),
+	            (int)Achievements::IsBlockingExecution(), (int)Achievements::IsActive());
 }
 
 void AchievementsBarMove(int delta) {

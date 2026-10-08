@@ -101,4 +101,20 @@ std::string AchievementsUser();
 void AchievementsLogin(const std::string &user, const std::string &password);
 void AchievementsLogout();
 
+// How a sign-in is going. It happens on another thread and can take a few
+// seconds, which with nothing on screen looked like the password had been
+// thrown away.
+enum class SignIn {
+	idle,       // nothing to say
+	working,    // talking to the server
+	succeeded,  // signed in
+	failed,     // it came back no
+};
+SignIn AchievementsSignIn();
+// Dismisses the result and forgets the credentials held for a retry.
+void ClearAchievementsSignIn();
+// Sends the same credentials again. They are kept only while the dialog is up.
+void RetryAchievementsSignIn();
+bool CanRetryAchievementsSignIn();
+
 }  // namespace psp5
