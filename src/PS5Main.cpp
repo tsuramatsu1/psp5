@@ -35,6 +35,7 @@
 #include "PS5Achievements.h"
 #include "PS5Audio.h"
 #include "PS5Overlay.h"
+#include "ui/PS5Cheats.h"
 #include "PS5Log.h"
 #include "PS5Paths.h"
 #include "ui/PS5Prefs.h"
@@ -232,6 +233,14 @@ pad g_pad{};
 // Bits already reported, so each is named once per run rather than per press.
 uint32_t g_reportedButtons = 0;
 
+// Buttons that were still down when the panel took the pad. The game is not
+// told about them until they come up again: while the panel is open the game is
+// shown nothing and its held buttons are released, so the Circle that closes
+// the panel would otherwise arrive at the game the very next frame as a fresh
+// press - and did, which is why backing out of the menu also pressed Circle in
+// the game.
+uint32_t g_swallowed = 0;
+
 void ReportUnmappedButtons(uint32_t pressed) {
 	uint32_t unknown = pressed & ~g_reportedButtons & ~PAD_INTERCEPTED;
 	for (const ButtonMap &entry : kButtons) {
@@ -258,8 +267,13 @@ void PollInput() {
 				g_previousButtons[player] = 0;
 			}
 		}
+		// Refreshed every frame the panel holds the pad, so whatever is down at
+		// the moment it closes is in here.
+		g_swallowed = state.held;
 		return;
 	}
+	// A swallowed button stops being swallowed once it is released.
+	g_swallowed &= state.held;
 
 	const uint32_t players = pad_players();
 	for (int player = 0; player < PAD_PLAYERS; player++) {
@@ -289,9 +303,11 @@ void PollInput() {
 		// numbering is only known from other people's code, so a button that
 		// seems dead is either unmapped or arriving somewhere unexpected - and
 		// this is the difference between the two.
-		ReportUnmappedButtons(current.held & ~g_previousButtons[player]);
-		SendButtonEdges(player, current.held, g_previousButtons[player]);
-		g_previousButtons[player] = current.held;
+		// Only the first pad drives the panel, so only its buttons are held back.
+		const uint32_t held = player == 0 ? (current.held & ~g_swallowed) : current.held;
+		ReportUnmappedButtons(held & ~g_previousButtons[player]);
+		SendButtonEdges(player, held, g_previousButtons[player]);
+		g_previousButtons[player] = held;
 		SendAxes(player, current);
 	}
 }
@@ -570,10 +586,19 @@ int main(int argc, char *argv[]) {
 
 		psp5::Trace("booting %s", game.c_str());
 		psp5::SetCheatOverlayGame(psp5::PendingLaunchDiscId());
+		// Which game's cheat switch applies from here on. PPSSPP reads it back
+		// through PS5_CheatsEnabled once its own config has been loaded.
+		psp5::ScopeCheatsToGame(psp5::PendingLaunchDiscId());
 		// Resume is PPSSPP's own auto-load, aimed at the newest state for this
 		// boot only: timing a load from here would mean guessing when the game
 		// is far enough along to take one.
-		g_Config.iAutoLoadSaveState = psp5::PendingLaunchResumes() ? 2 : 0;
+		// Not g_Config.iAutoLoadSaveState: that is one of PPSSPP's per-game
+		// settings, and Load_PSP_ISO calls LoadGameConfig partway through the
+		// boot - after this runs and before EmuScreen reads it. A game that has
+		// a config of its own, which psp5 writes the moment a cheat is toggled
+		// for it, carried AutoLoadSaveState=0 and put it back. EmuScreen asks
+		// psp5 directly instead (see tools/mkpatch.py).
+		psp5::SetResumeRequested(psp5::PendingLaunchResumes());
 		psp5::ClearGameEnded();
 		PS5_BootGame(game.c_str());
 

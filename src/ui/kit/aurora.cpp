@@ -42,6 +42,7 @@
 #include "ui/PS5GameSound.h"
 #include "ui/PS5Keyboard.h"
 #include "ui/PS5Cheats.h"
+#include "ui/PS5GameAchievements.h"
 #include "ui/PS5Settings.h"
 
 #include <algorithm>
@@ -68,6 +69,7 @@ constexpr int kViews = static_cast<int>(psp5::GameView::count); // tabs along th
 // The last row of the settings panel, which is not a setting.
 const std::string kQuitLabel = "Close PSP5";
 const std::string kCheatsEnabledLabel = "Cheats enabled";
+const std::string kImportLabel = "Import from cheat.db";
 const std::string kOverridesLabel = "Settings for this game";
 const std::string kAchievementsLabel = "RetroAchievements";
 // The RetroAchievements dialogs - signing in, and signing out - are the same
@@ -77,13 +79,18 @@ const std::string kAchievementsLabel = "RetroAchievements";
 // through the buttons.
 constexpr float kDialogW = 780.0f;
 constexpr float kDialogPad = 48.0f;
-constexpr float kDialogBody = 178.0f;   // first baseline of the body text
-constexpr float kDialogLine = 34.0f;    // and its line height, over two lines
+constexpr float kDialogBody = 178.0f;  // first baseline of the body text
+constexpr float kDialogLine = 34.0f;   // and its line height
+constexpr float kDialogText = 25.0f;   // and its size
+constexpr int kDialogMaxLines = 3;
 constexpr float kDialogButton = 62.0f;
-constexpr float kDialogH = kDialogBody + kDialogLine + 12.0f  // the body's last descender
-                           + 30.0f                            // air under it
-                           + kDialogButton + 36.0f;           // the buttons, and the foot
-constexpr float kDialogButtonY = kDialogH - 36.0f - kDialogButton;
+constexpr float kDialogAir = 30.0f;    // between the last line and the buttons
+constexpr float kDialogFoot = 36.0f;
+
+// The top of the kit's button-hint row: its layout centres the glyphs on 1010
+// and draws them 40 tall. The settings list measures itself against this rather
+// than assuming a number of rows that happens to fit.
+constexpr float kHintsTop = 1010.0f - 20.0f;
 
 constexpr float kShelfY = 730.0f;     // top of the focused shelf's cards
 constexpr float kShelfPitch = 304.0f; // distance between shelves
@@ -156,6 +163,13 @@ class Aurora final : public app::Concept
     {
         age_ = 0.0f;
         sheet_open_ = false;
+        // Coming back from a game. Nothing should still be holding a game's
+        // settings open, but saying so costs nothing and a stale scope is not
+        // something to carry into a fresh shelf.
+        cheats_open_ = false;
+        achievements_open_ = false;
+        psp5::GameAchievementList().Close();
+        psp5::SaveCheatsEnabled();
     }
 
     void update(const InputFrame &input, float dt, app::Feedback &feedback) override
@@ -267,7 +281,15 @@ class Aurora final : public app::Concept
         // console's button for this, and it leaves the face buttons to the shelf.
         if (input.is_pressed(Action::menu))
         {
+            // OPTIONS is read before anything else and returns, so it is the
+            // one way out of the cheat panel that skipped closing it.
+            close_cheats(feedback, false);
             toggle_settings(feedback);
+            return;
+        }
+        if (achievements_open_)
+        {
+            update_achievements(input, feedback);
             return;
         }
         if (!settings_open_ && !sheet_open_ && update_tabs(input, feedback))
@@ -346,6 +368,8 @@ class Aurora final : public app::Concept
             draw_shelves(list);
         }
         list.pop_transform();
+        if (achievements_open_)
+            draw_achievements(list);
         draw_sign_in(list);
         draw_sign_out(list);
         psp5::KeyboardPanel().Draw(list, context_.fonts, palette_[3].value());
@@ -565,6 +589,36 @@ class Aurora final : public app::Concept
         if (state == psp5::SignIn::failed)
             return psp5::CanRetryAchievementsSignIn() ? 2 : 1;
         return state == psp5::SignIn::succeeded ? 1 : 0;
+    }
+
+    // Where a dialog's card and buttons go, for a message of this length. The
+    // text is wrapped first and the card built around the answer. Both dialogs
+    // were given a height by hand and both were too short, so the last line of
+    // the message ran through the buttons; and the sign-in message is one line
+    // while it is working and three when it has failed, which no one height
+    // holds.
+    struct DialogBox
+    {
+        Rect card;
+        float body;    // first baseline of the message
+        float buttons; // top of the button row
+    };
+
+    DialogBox dialog_box(std::string_view message) const
+    {
+        const ui::Fonts &fonts = context_.fonts;
+        const std::size_t wrapped =
+            fonts.regular.font->wrap(message, kDialogText, kDialogW - kDialogPad * 2.0f).size();
+        const float lines =
+            static_cast<float>(std::clamp<std::size_t>(wrapped, 1, kDialogMaxLines));
+        const float body_bottom = kDialogBody + lines * kDialogLine;
+        const float h = body_bottom + kDialogAir + kDialogButton + kDialogFoot;
+        DialogBox box;
+        box.card = Rect{(gfx::kVirtualWidth - kDialogW) * 0.5f,
+                        (gfx::kVirtualHeight - h) * 0.5f, kDialogW, h};
+        box.body = box.card.y + kDialogBody;
+        box.buttons = box.card.y + body_bottom + kDialogAir;
+        return box;
     }
 
     void draw_sign_out(gfx::DrawList &list) const
@@ -884,6 +938,24 @@ class Aurora final : public app::Concept
         }
         if (input.is_pressed(Action::north))
             toggle_favorite(feedback);
+        if (input.is_pressed(Action::jump_next) && !empty())
+        {
+            // R2: the face buttons are all spoken for on the shelf - Cross is
+            // the details, Circle goes back, Triangle favourites and Square is
+            // this game's settings - so the achievements get a trigger.
+            if (!psp5::AchievementsLoggedIn())
+            {
+                feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
+            }
+            else
+            {
+                feedback.play(audio::Cue::open);
+                achievements_open_ = true;
+                achievement_ = 0;
+                psp5::GameAchievementList().Open(entry(focused_item()).path,
+                                                 entry(focused_item()).disc_id);
+            }
+        }
         if (input.is_pressed(Action::west) && !empty())
         {
             // The same panel, scoped to this game. OPTIONS opens it for the
@@ -892,6 +964,26 @@ class Aurora final : public app::Concept
                                             item(focused_item()).title);
             open_settings(feedback);
         }
+    }
+
+    // Leaving the cheat panel, by whatever route. While it is up, PPSSPP is
+    // held in the game's own settings so the master switch reads and writes
+    // that game's value - and that has to be given back on the way out. It was
+    // only given back by Circle, so leaving any other way left the next game's
+    // panel editing this game's file.
+    void close_cheats(app::Feedback &feedback, bool announce)
+    {
+        if (!cheats_open_)
+            return;
+        psp5::Cheats &cheats = psp5::CheatList();
+        const bool changed = cheats.dirty();
+        if (changed)
+            cheats.Save();
+        psp5::SaveCheatsEnabled();
+        if (announce)
+            feedback.play(changed ? audio::Cue::saved : audio::Cue::back);
+        cheats_open_ = false;
+        cheat_notice_.clear();
     }
 
     void update_cheats(const InputFrame &input, app::Feedback &feedback)
@@ -904,12 +996,7 @@ class Aurora final : public app::Concept
 
         if (input.is_pressed(Action::back))
         {
-            const bool changed = cheats.dirty();
-            if (changed)
-                cheats.Save();
-            psp5::SaveCheatsEnabled();
-            feedback.play(changed ? audio::Cue::saved : audio::Cue::back);
-            cheats_open_ = false;
+            close_cheats(feedback, true);
             return;
         }
 
@@ -929,12 +1016,85 @@ class Aurora final : public app::Concept
             {
                 psp5::SetCheatsEnabled(!psp5::CheatsEnabled());
                 cheat_ = 0;
+                cheat_notice_.clear();
+                feedback.play(audio::Cue::toggle);
+            }
+            else if (cheat_import_row(cheat_))
+            {
+                import_cheats(feedback);
             }
             else
             {
-                cheats.Toggle(static_cast<std::size_t>(cheat_ - 1));
+                const int code = cheat_code_at(cheat_);
+                if (code >= 0 && code < static_cast<int>(cheats.size()))
+                    cheats.Toggle(static_cast<std::size_t>(code));
+                feedback.play(audio::Cue::toggle);
             }
-            feedback.play(audio::Cue::toggle);
+        }
+    }
+
+    void import_cheats(app::Feedback &feedback)
+    {
+        // Anything switched on and not yet written goes first: the import
+        // appends to the same file, and saving afterwards would write the list
+        // as it was read and drop what was just added.
+        psp5::Cheats &cheats = psp5::CheatList();
+        if (cheats.dirty())
+            cheats.Save();
+
+        int added = 0;
+        const psp5::Cheats::Import result = cheats.ImportFromDatabase(&added);
+        char text[96];
+        switch (result)
+        {
+        case psp5::Cheats::Import::added:
+            std::snprintf(text, sizeof(text), "Imported %d line%s from cheat.db", added,
+                          added == 1 ? "" : "s");
+            feedback.play(audio::Cue::saved);
+            break;
+        case psp5::Cheats::Import::none:
+            std::snprintf(text, sizeof(text), "cheat.db has nothing new for this game");
+            feedback.play(audio::Cue::back);
+            break;
+        case psp5::Cheats::Import::noFile:
+            std::snprintf(text, sizeof(text), "No cheat.db in PSP/Cheats");
+            feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
+            break;
+        case psp5::Cheats::Import::noGame:
+            std::snprintf(text, sizeof(text), "This game has no disc id to look up");
+            feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
+            break;
+        default:
+            std::snprintf(text, sizeof(text), "Could not write the cheat file");
+            feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
+            break;
+        }
+        cheat_notice_ = text;
+        cheat_ = std::clamp(cheat_, 0, std::max(0, cheat_rows() - 1));
+    }
+
+    void update_achievements(const InputFrame &input, app::Feedback &feedback)
+    {
+        psp5::GameAchievements &list = psp5::GameAchievementList();
+        list.Update();
+
+        if (input.is_pressed(Action::back))
+        {
+            feedback.play(audio::Cue::back);
+            list.Close();
+            achievements_open_ = false;
+            return;
+        }
+        const int count = static_cast<int>(list.size());
+        if (count > 0 && (input.nav == Direction::up || input.nav == Direction::down))
+        {
+            const int next =
+                std::clamp(achievement_ + (input.nav == Direction::down ? 1 : -1), 0, count - 1);
+            if (next != achievement_)
+            {
+                achievement_ = next;
+                feedback.play(audio::Cue::focus, 1.0f, 0.35f);
+            }
         }
     }
 
@@ -990,6 +1150,7 @@ class Aurora final : public app::Concept
                 // built: it is one small file, and reading it on the way in
                 // means a file copied since the title started is still found.
                 psp5::CheatList().Load(entry(focused_item()).disc_id);
+                cheat_notice_.clear();
                 cheat_ = 0;  // the master switch
                 cheats_open_ = true;
                 feedback.play(audio::Cue::open);
@@ -1003,8 +1164,10 @@ class Aurora final : public app::Concept
         if (input.is_pressed(Action::back))
         {
             feedback.play(audio::Cue::back);
+            close_cheats(feedback, false);
+            psp5::GameAchievementList().Close();
+            achievements_open_ = false;
             sheet_open_ = false;
-            cheats_open_ = false;
         }
     }
 
@@ -1094,18 +1257,38 @@ class Aurora final : public app::Concept
         ui::text(list, fonts.regular, hint, kMargin, 243, 25, kWhite.with_alpha(0.7f));
         list.pop_opacity();
 
-        // Eleven rows and a title have to fit inside 1080, above the hint bar.
+        // The list scrolls. It used to draw every row from a fixed top, which
+        // fitted while there were eleven of them and put the last one through
+        // the button hints the moment a twelfth was added. How many fit is
+        // worked out from the space there is, so adding a setting cannot
+        // overrun the screen again.
         constexpr float kRow = 56.0f;
         const float top = 300.0f;
         const float width = gfx::kVirtualWidth - kMargin * 2;
         const float shake = ui::shake(nudge_.value, clock_, 16.0f, 8.0f);
-        for (int i = 0; i < settings_rows(); ++i)
+        const int count = settings_rows();
+        const int visible =
+            std::max(1, static_cast<int>((kHintsTop - 16.0f - top) / kRow));
+        const int first = std::clamp(setting_ - visible / 2, 0, std::max(0, count - visible));
+        const int last = std::min(count, first + visible);
+
+        // Which part of the list this is, when there is more of it than fits.
+        if (count > visible)
+        {
+            char counter[32];
+            std::snprintf(counter, sizeof(counter), "%d of %d", setting_ + 1, count);
+            ui::text(list, fonts.regular, counter, gfx::kVirtualWidth - kMargin, 243, 24,
+                     kWhite.with_alpha(0.5f), gfx::Align::right);
+        }
+
+        for (int i = first; i < last; ++i)
         {
             const bool quit = quit_row(i);
             const bool focused = i == setting_;
-            const float appear = tween::stagger(age_, 2 + i, 0.05f, 0.5f);
+            const float appear = tween::stagger(age_, 2 + i - first, 0.05f, 0.5f);
             list.push_opacity(appear);
-            const Rect rect{kMargin, top + static_cast<float>(i) * kRow + 24 * (1.0f - appear),
+            const Rect rect{kMargin,
+                            top + static_cast<float>(i - first) * kRow + 24 * (1.0f - appear),
                             width, kRow - 8};
             if (focused)
             {
@@ -1199,19 +1382,10 @@ class Aurora final : public app::Concept
         // even the floor is not enough - a shrunk title still reads, a title
         // running under the cover does not.
         {
+            // The artwork starts at 1316, so the title has to stop before it.
             constexpr float kTitleRight = 1316.0f - 48.0f;
-            const float room = kTitleRight - x;
-            float size = 88.0f;
-            while (size > 52.0f && fonts.display.font->measure(it.title, size) > room)
-                size -= 4.0f;
             std::string shown = it.title;
-            if (fonts.display.font->measure(shown, size) > room)
-            {
-                while (shown.size() > 4 &&
-                       fonts.display.font->measure(shown + "...", size) > room)
-                    shown.pop_back();
-                shown += "...";
-            }
+            const float size = fit_title(&shown, 88.0f, 52.0f, kTitleRight - x);
             // Bigger text sits lower, so the baseline follows the size and the
             // block keeps its distance from the line under it.
             ui::text(list, fonts.display, shown, x - 4, 304 - (88.0f - size) * 0.35f, size,
@@ -1223,12 +1397,21 @@ class Aurora final : public app::Concept
         const psp5::GameEntry &file = entry(index);
         std::snprintf(text, sizeof(text), "%s  \xC2\xB7  %s  \xC2\xB7  Added %s",
                       file.format.c_str(), file.size_text.c_str(), file.date_text.c_str());
-        ui::text(list, fonts.regular, text, x, 358, 26, kWhite.with_alpha(0.78f));
+        // The disc id, under the title. Set in the mono face because that is
+        // what it is - an identifier, not prose - and it is what RetroAchievements
+        // and the cheat files are keyed on, so it is worth being able to read off
+        // the screen.
+        if (!file.disc_id.empty())
+            ui::text(list, fonts.mono, file.disc_id, x, 334, 22, kWhite.with_alpha(0.5f));
+        ui::text(list, fonts.regular, text, x, 368, 26, kWhite.with_alpha(0.78f));
         // The path was only ever useful for finding a file. How long it has been
         // played is what a shelf is usually asked.
         ui::text(list, fonts.regular, psp5::PlayedLabel(file.disc_id), x, 420, 26,
                  kWhite.with_alpha(0.7f));
 
+        // Triangle is already favorites and Square is already this game's
+        // settings, so the achievements button is shown rather than bound to a
+        // face button: the shelf's Cross moves to it like any other control.
         const Rect play{x, 540, 220, 64};
         list.glow(play, 32, 18, it.accent.with_alpha(0.35f));
         list.rounded_rect(play, 32, kWhite);
@@ -1244,7 +1427,28 @@ class Aurora final : public app::Concept
         const bool starred = psp5::Library().IsFavorite(static_cast<std::size_t>(index));
         list.star(more.cx(), more.cy(), 16 + 10 * star_.value,
                   starred ? Color::rgb(0xffd166) : kWhite.with_alpha(0.85f), starred ? 0.0f : 2.5f);
+
         list.pop_opacity();
+    }
+
+    // A title set at whatever size fits the room it has, down to a floor, and
+    // shortened only when even the floor is not enough: a shrunk title still
+    // reads, a title running under the artwork or the buttons does not.
+    // Rewrites `text` and returns the size to set it at.
+    float fit_title(std::string *text, float largest, float smallest, float room) const
+    {
+        const ui::Fonts &fonts = context_.fonts;
+        float size = largest;
+        while (size > smallest && fonts.display.font->measure(*text, size) > room)
+            size -= 4.0f;
+        if (fonts.display.font->measure(*text, size) > room)
+        {
+            while (text->size() > 4 &&
+                   fonts.display.font->measure(*text + "...", size) > room)
+                text->pop_back();
+            *text += "...";
+        }
+        return size;
     }
 
     void draw_hero(gfx::DrawList &list) const
@@ -1350,7 +1554,15 @@ class Aurora final : public app::Concept
         const float x = art.x + art.w + 56;
         ui::text(list, fonts.semibold, ui::upper(it.genre), x, sheet.y + 92, 20, it.accent,
                  gfx::Align::left, 4.0f);
-        ui::text(list, fonts.display, it.title, x - 2, sheet.y + 156, 60, kWhite);
+        {
+            // The actions start here, so the title stops before them - it used
+            // to be set at 60 whatever its length and ran straight under Play.
+            const float actions_left = sheet.x + sheet.w - 56 - 420;
+            std::string shown = it.title;
+            const float size = fit_title(&shown, 60.0f, 34.0f, actions_left - 32.0f - x);
+            ui::text(list, fonts.display, shown, x - 2, sheet.y + 156 - (60.0f - size) * 0.35f,
+                     size, kWhite);
+        }
         const psp5::GameEntry &file = entry(focused_item());
         ui::text(list, fonts.regular, psp5::PlayedLabel(file.disc_id), x, sheet.y + 226, 26,
                  kWhite.with_alpha(0.82f));
@@ -1404,11 +1616,28 @@ class Aurora final : public app::Concept
     // The master switch, then one row per code - but only while the switch is
     // on. With it off the codes do nothing, and a list of switches that cannot
     // take effect invites turning them on and wondering why nothing happened.
+    // Row 0 is the master switch. Row 1 imports this game's codes out of
+    // PSP/Cheats/cheat.db, when there is one to read - an action rather than a
+    // switch, so it sits above the codes instead of among them. The codes
+    // follow, and are hidden entirely while cheats are off.
+    bool cheat_import_row(int row) const
+    {
+        return row == 1 && psp5::CheatsEnabled() && psp5::Cheats::DatabaseExists();
+    }
+
+    // Which code a row shows, or -1 where the row is not a code.
+    int cheat_code_at(int row) const
+    {
+        const int first = 1 + (cheat_import_row(1) ? 1 : 0);
+        return row >= first ? row - first : -1;
+    }
+
     int cheat_rows() const
     {
         if (!psp5::CheatsEnabled())
             return 1;
-        return 1 + static_cast<int>(psp5::CheatList().size());
+        return 1 + (cheat_import_row(1) ? 1 : 0) +
+               static_cast<int>(psp5::CheatList().size());
     }
 
     // A switch, not a tick box: a track with the knob at one end, filled in the
@@ -1423,6 +1652,164 @@ class Aurora final : public app::Concept
         const float knob = on ? x + kWidth - radius : x + radius;
         list.circle(knob, y + radius, radius - 4.0f,
                     on ? Color::rgb(0x0b0d16) : kWhite.with_alpha(0.85f));
+    }
+
+    // This game's achievements, as a bar down the right edge - the shape the
+    // console uses for a list that belongs beside what is on screen rather than
+    // instead of it. The same shape as the in-game bar on R1 + R3.
+    void draw_achievements(gfx::DrawList &list) const
+    {
+        const ui::Fonts &fonts = context_.fonts;
+        const psp5::GameAchievements &view = psp5::GameAchievementList();
+        constexpr float kWidth = 620.0f;
+        const float x = gfx::kVirtualWidth - kWidth;
+
+        list.rounded_rect({0, 0, x, gfx::kVirtualHeight}, 0, Color::rgb(0x05070f, 0.72f));
+        list.rounded_rect({x, 0, kWidth, gfx::kVirtualHeight}, 0, Color::rgb(0x000000));
+        list.rounded_rect({x, 0, 1.5f, gfx::kVirtualHeight}, 0, kWhite.with_alpha(0.18f));
+
+        const float left = x + 44;
+        const float inner = kWidth - 88;
+        ui::text(list, fonts.semibold, "ACHIEVEMENTS", left, 92, 20, palette_[3].value(),
+                 gfx::Align::left, 4.0f);
+        ui::text(list, fonts.display,
+                 fonts.display.font->fit(item(focused_item()).title, 38, inner), left, 146, 38,
+                 kWhite);
+
+        using State = psp5::GameAchievements::State;
+        const State state = view.state();
+        if (state != State::ready)
+        {
+            const char *said =
+                state == State::working       ? "Looking this game up..."
+                : state == State::notSignedIn ? "Sign in to RetroAchievements in settings."
+                : state == State::unsupported ? "This file cannot be identified."
+                                              : "RetroAchievements has none for this game.";
+            ui::paragraph(list, fonts.regular, said, left, 216, 25, inner, 34,
+                          kWhite.with_alpha(0.75f), 3);
+            if (state == State::working)
+            {
+                const float width = 150.0f;
+                const float travel = inner - width;
+                const float at = (std::sin(clock_ * 1.9f) * 0.5f + 0.5f) * travel;
+                list.rounded_rect({left, 290, inner, 4}, 2, kWhite.with_alpha(0.14f));
+                list.rounded_rect({left + at, 290, width, 4}, 2, palette_[3].value());
+            }
+            return;
+        }
+
+        // How far along the game is.
+        ui::text(list, fonts.semibold, view.summary(), left, 206, 30, kWhite);
+        ui::text(list, fonts.regular, view.points(), x + kWidth - 44, 206, 22,
+                 kWhite.with_alpha(0.6f), gfx::Align::right);
+        list.rounded_rect({left, 226, inner, 6}, 3, kWhite.with_alpha(0.14f));
+        list.rounded_rect({left, 226, inner * view.fraction(), 6}, 3, palette_[3].value());
+
+        const std::span<const psp5::GameAchievement> rows = view.rows();
+        constexpr float kDetail = 19.0f;  // the description's size
+        constexpr float kLine = 22.0f;    // ... and its line height
+        const float top = 272.0f;
+        const int count = static_cast<int>(rows.size());
+        const float textW = inner - 72 - 54;
+
+        // What an achievement asks for is a sentence, and a sentence is as long
+        // as it is - but giving every row room for its whole sentence left four
+        // of them on a screen that holds ten. So the row being read is the one
+        // that opens: it shows the description in full, and the rest show the
+        // name and what they are worth.
+        const auto row_height = [&](int index) {
+            const psp5::GameAchievement &row = rows[static_cast<std::size_t>(index)];
+            if (row.header)
+                return 44.0f;
+            if (index != achievement_ || row.detail.empty())
+                return 72.0f;
+            const std::size_t lines =
+                fonts.regular.font->wrap(row.detail, kDetail, textW + 40).size();
+            return 58.0f + static_cast<float>(lines) * kLine + 16.0f;
+        };
+
+        // Enough of the list is skipped to keep the focused row on screen.
+        // Heights vary, so the first visible row is found by walking back from
+        // the cursor until the rows below it fill the bar.
+        const float bottom = kHintsTop - 16.0f;
+        const float space = bottom - top;
+        int first = std::clamp(achievement_, 0, std::max(0, count - 1));
+        float used = count > 0 ? row_height(first) : 0.0f;
+        while (first > 0)
+        {
+            const float next = row_height(first - 1);
+            if (used + next > space)
+                break;
+            used += next;
+            --first;
+        }
+
+        float y = top;
+        for (int i = first; i < count; ++i)
+        {
+            const psp5::GameAchievement &row = rows[static_cast<std::size_t>(i)];
+            const bool focused = i == achievement_;
+            const float height = row_height(i);
+            // Whole rows only. A row that would cross the hints is left for the
+            // next screenful instead of being drawn over them.
+            if (y + height > bottom)
+                break;
+
+            if (row.header)
+            {
+                ui::text(list, fonts.semibold, ui::upper(row.title), left, y + 30, 17,
+                         kWhite.with_alpha(0.45f), gfx::Align::left, 3.0f);
+                y += height;
+                continue;
+            }
+
+            if (focused)
+            {
+                list.rounded_rect({x + 8, y, kWidth - 16, height - 8}, 16, kWhite.with_alpha(0.1f));
+                list.rounded_rect({x, y + 8, 4, height - 24}, 2, palette_[3].value());
+            }
+
+            // The badge RetroAchievements shows, once it has arrived. Until
+            // then a plain mark, rather than an empty square.
+            const Rect mark{left, y + 12, 56, 56};
+            if (row.badge)
+            {
+                list.image(row.badge, mark, gfx::kFullUv,
+                           row.unlocked ? kWhite : kWhite.with_alpha(0.55f), 10);
+            }
+            else if (row.unlocked)
+            {
+                list.rounded_rect(mark, 12, palette_[3].value());
+            }
+            else
+            {
+                list.bordered_rect(mark, 12, kWhite.with_alpha(0.04f), 2,
+                                   kWhite.with_alpha(0.26f));
+            }
+
+            const float textX = left + 72;
+            ui::text(list, focused ? fonts.semibold : fonts.regular,
+                     fonts.regular.font->fit(row.title, 24, textW), textX, y + 34, 24,
+                     kWhite.with_alpha(row.unlocked ? 1.0f : 0.7f));
+            if (focused && !row.detail.empty())
+                ui::paragraph(list, fonts.regular, row.detail, textX, y + 58, kDetail, textW + 40,
+                              kLine, kWhite.with_alpha(0.5f));
+            if (!row.points.empty())
+                ui::text(list, fonts.semibold, row.points, x + kWidth - 44, y + 34, 21,
+                         kWhite.with_alpha(0.5f), gfx::Align::right);
+            if (row.progress > 0.0f && !row.unlocked)
+            {
+                list.rounded_rect({textX, y + height - 18, textW, 3}, 2, kWhite.with_alpha(0.14f));
+                list.rounded_rect({textX, y + height - 18, textW * row.progress, 3}, 2,
+                                  palette_[3].value());
+            }
+            y += height;
+        }
+
+        char counter[48];
+        std::snprintf(counter, sizeof(counter), "%d of %d", achievement_ + 1, count);
+        ui::text(list, fonts.regular, counter, x + kWidth - 44, 92, 20, kWhite.with_alpha(0.55f),
+                 gfx::Align::right);
     }
 
     void draw_cheats(gfx::DrawList &list, const Rect &sheet) const
@@ -1445,23 +1832,42 @@ class Aurora final : public app::Concept
         for (int i = first; i < std::min(count, first + kVisible); ++i)
         {
             const bool master = i == 0;
-            const bool on = master ? psp5::CheatsEnabled()
-                                   : codes[static_cast<std::size_t>(i - 1)].enabled;
-            const std::string &label =
-                master ? kCheatsEnabledLabel : codes[static_cast<std::size_t>(i - 1)].name;
+            const bool importer = cheat_import_row(i);
+            const int code = cheat_code_at(i);
             const bool focused = i == cheat_;
             const float y = top + static_cast<float>(i - first) * kRow;
+            // The codes are indented under the switch and the import that
+            // govern them, rather than reading as three of the same thing.
+            const float indent = code >= 0 ? 34.0f : 0.0f;
             if (focused)
-                list.rounded_rect({x - 18, y - 30, sheet.w - 76, kRow - 6}, 14,
+                list.rounded_rect({x - 18 + indent, y - 30, sheet.w - 76 - indent, kRow - 6}, 14,
                                   kWhite.with_alpha(0.12f));
-            draw_toggle(list, x, y - 23, on);
-            ui::text(list, focused || master ? fonts.semibold : fonts.regular, label, x + 76, y, 26,
-                     kWhite.with_alpha(focused ? 1.0f : 0.75f));
+
+            if (importer)
+            {
+                // No switch: this one does something rather than holding a
+                // state, so it is a line of text on its own.
+                ui::text(list, focused ? fonts.semibold : fonts.regular, kImportLabel, x + 76, y,
+                         26, kWhite.with_alpha(focused ? 1.0f : 0.75f));
+                continue;
+            }
+
+            const bool on = master ? psp5::CheatsEnabled()
+                                   : codes[static_cast<std::size_t>(code)].enabled;
+            const std::string &label =
+                master ? kCheatsEnabledLabel : codes[static_cast<std::size_t>(code)].name;
+            draw_toggle(list, x + indent, y - 23, on);
+            ui::text(list, focused || master ? fonts.semibold : fonts.regular, label,
+                     x + indent + 76, y, 26, kWhite.with_alpha(focused ? 1.0f : 0.75f));
         }
+
+        // Under the last row that was drawn, whichever rows those were. Written
+        // as top + kRow when the master switch was the only one above it, this
+        // then sat on top of the import row.
+        const float y = top + static_cast<float>(std::min(count, kVisible)) * kRow + 16.0f;
 
         if (!psp5::CheatsEnabled())
         {
-            const float y = top + kRow + 16.0f;
             char note[96];
             std::snprintf(note, sizeof(note), "%u code%s in this game's file.",
                           (unsigned)codes.size(), codes.size() == 1 ? "" : "s");
@@ -1471,11 +1877,14 @@ class Aurora final : public app::Concept
                 ui::text(list, fonts.regular, "Turn the switch on to choose between them.", x,
                          y + 38, 24, kWhite.with_alpha(0.55f));
         }
+        else if (!cheat_notice_.empty())
+        {
+            ui::text(list, fonts.regular, cheat_notice_, x, y, 24, palette_[3].value());
+        }
         else if (codes.empty())
         {
-            // Under the master switch, which is worth showing on its own: it is
-            // what decides whether a file copied here later takes effect.
-            const float y = top + kRow + 16.0f;
+            // Worth showing on its own: the master switch is what decides
+            // whether a file copied here later takes effect.
             ui::text(list, fonts.regular, "No cheat file for this game. Copy a CWCheat .ini to:", x,
                      y, 24, kWhite.with_alpha(0.7f));
             ui::text(list, fonts.regular, cheats.path(), x, y + 38, 24, palette_[3].value());
@@ -1503,7 +1912,13 @@ class Aurora final : public app::Concept
         // With no games, every hint below names a control that does nothing.
         if (empty())
             return;
-        if (cheats_open_)
+        if (achievements_open_)
+        {
+            const ui::Hint hints[] = {{ui::Button::dpad, "Move"},
+                                      {ui::Button::circle, "Back"}};
+            ui::draw_hints(list, fonts, style, hints, 2, 1824, true);
+        }
+        else if (cheats_open_)
         {
             const ui::Hint hints[] = {{ui::Button::cross, "Toggle"},
                                       {ui::Button::circle, "Save and close"}};
@@ -1517,7 +1932,8 @@ class Aurora final : public app::Concept
         else
         {
             list.push_opacity(tween::stagger(age_, 8, 0.08f, 0.5f) * (1.0f - sheet_.value));
-            const ui::Hint hints[] = {{ui::Button::cross, "Details"},
+            const ui::Hint hints[] = {{ui::Button::r2, "Achievements"},
+                                      {ui::Button::cross, "Details"},
                                       {ui::Button::square, "Game settings"},
                                       {ui::Button::triangle, "Favorite"},
                                       {ui::Button::options, "Settings"}};
@@ -1551,6 +1967,9 @@ class Aurora final : public app::Concept
     ui::Pulse star_;
     bool sheet_open_ = false;
     bool cheats_open_ = false; // the sheet is showing the cheat list, not the details
+    bool achievements_open_ = false; // ... or this game's achievements
+    int achievement_ = 0;
+    std::string cheat_notice_; // what the last import did, shown under the list
     int cheat_ = 0;            // the focused code
     tween::Spring sheet_;
     int action_ = 0;

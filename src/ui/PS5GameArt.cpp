@@ -29,7 +29,6 @@
 #include "PS5Log.h"
 
 namespace psp5 {
-namespace {
 
 // PNG bytes to RGBA. pngLoadPtr allocates with malloc and leaves the caller to
 // free it, so the copy into the vector is also what bounds the lifetime.
@@ -53,6 +52,8 @@ bool DecodePng(const std::string &bytes, Artwork *out) {
 	free(pixels);
 	return out->valid();
 }
+
+namespace {
 
 bool ReadFromFileSystem(IFileSystem *fs, const std::string &name, std::string *contents) {
 	const PSPFileInfo info = fs->GetFileInfo(name);

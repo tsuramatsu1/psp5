@@ -15,13 +15,18 @@
 #include "ui/PS5Cheats.h"
 
 #include <cstdio>
+#include <sys/stat.h>
+#include <cstring>
+#include <algorithm>
 
 #include "Common/File/FileUtil.h"
 #include "Common/File/Path.h"
 #include "Core/Config.h"
 #include "Core/CwCheat.h"
+#include "Core/System.h"
 
 #include "PS5Log.h"
+#include "ui/PS5Prefs.h"
 
 namespace psp5 {
 
@@ -32,73 +37,192 @@ Cheats &CheatList() {
 
 namespace {
 
-bool g_enabled_dirty = false;
-// Which game the switch belongs to, and whether psp5 is the one that put PPSSPP
-// into game-specific mode - in a running game PPSSPP is already in it, and
-// leaving it there would take the game's settings out from under it.
+// Which game the switch belongs to.
 std::string g_switch_game;
-bool g_scoped_here = false;
 
 }  // namespace
 
 bool CheatsEnabled() {
-	return g_Config.bEnableCheats;
+	return prefs::cheatsFor(g_switch_game);
 }
 
-// Called when the panel opens, so the switch below reads and writes this game's
-// value rather than the global one.
+// What PPSSPP is told as a game boots, after its own config has been read.
+extern "C" bool PS5_CheatsEnabled() {
+	return psp5::prefs::cheatsFor(psp5::g_switch_game);
+}
+
+// Called when the panel opens, and as a game boots, so the switch below is
+// read and written for this game.
+//
+// Nothing is done to PPSSPP's configuration here any more. The switch lives in
+// psp5's own settings, keyed by disc id: PPSSPP's bEnableCheats is one of its
+// per-game settings, so holding the answer there meant entering its
+// game-specific config mode to read it and leaving that mode afterwards - and
+// any route out of the panel that skipped the leaving left the next game being
+// edited inside the last game's settings, which is what made one game's switch
+// appear to be every game's. It also meant switching cheats on had to create
+// the game's second ini, which is what "Settings for this game" reports, so
+// cheats and per-game settings came on together.
 void ScopeCheatsToGame(const std::string &discId) {
 	g_switch_game = discId;
-	g_enabled_dirty = false;
-	if (discId.empty() || g_Config.IsGameSpecific()) {
-		// Either homebrew with no id to key a config on, or a game already
-		// running - PPSSPP loaded its config when it booted.
-		return;
-	}
-	if (g_Config.HasGameConfig(discId)) {
-		g_Config.LoadGameConfig(discId);
-		g_scoped_here = true;
-	}
+	// The running engine re-reads this a few times a second (see hleCheat), so
+	// a game already playing picks the change up without a reload.
+	g_Config.bEnableCheats = prefs::cheatsFor(discId);
 }
 
 void SetCheatsEnabled(bool enabled) {
-	if (g_Config.bEnableCheats == enabled) {
+	if (g_switch_game.empty() || enabled == prefs::cheatsFor(g_switch_game)) {
 		return;
 	}
-	// A game with no settings of its own needs some before the switch has
-	// anywhere to live.
-	if (!g_switch_game.empty() && !g_Config.IsGameSpecific()) {
-		if (!g_Config.HasGameConfig(g_switch_game)) {
-			g_Config.CreateGameConfig(g_switch_game);
-		}
-		g_Config.LoadGameConfig(g_switch_game);
-		g_scoped_here = true;
-	}
+	prefs::setCheatsFor(g_switch_game, enabled);
 	g_Config.bEnableCheats = enabled;
-	g_enabled_dirty = true;
 }
 
+// Nothing to do any more: the switch is written the moment it changes, because
+// psp5's settings file is a few short lines rather than PPSSPP's whole ini.
+// Kept because the panels call it on the way out, and because something has to
+// be the place where that becomes untrue again.
 void SaveCheatsEnabled() {
-	const bool scoped = g_scoped_here;
-	if (g_enabled_dirty) {
-		// Deferred to here rather than done on the press: PPSSPP's save rewrites
-		// the whole ini.
-		if (!g_switch_game.empty() && g_Config.IsGameSpecific()) {
-			g_Config.SaveGameConfig(g_switch_game, g_switch_game);
-			psp5::Trace("cheats: %s for %s", g_Config.bEnableCheats ? "on" : "off",
-			            g_switch_game.c_str());
-		} else {
-			g_Config.Save("psp5 cheats");
-			psp5::Trace("cheats: master switch %s", g_Config.bEnableCheats ? "on" : "off");
+}
+
+std::string Cheats::DatabasePath() {
+	return (GetSysDirectory(DIRECTORY_CHEATS) / "cheat.db").ToString();
+}
+
+bool Cheats::DatabaseExists() {
+	return File::Exists(GetSysDirectory(DIRECTORY_CHEATS) / "cheat.db");
+}
+
+namespace {
+
+// fgets, with the line ending taken off. The database is a text file of unknown
+// provenance and its lines can be long; PPSSPP allows 2048 and so does this.
+char *ReadLine(char *buffer, int size, FILE *fh) {
+	char *line = fgets(buffer, size, fh);
+	if (!line) {
+		return nullptr;
+	}
+	std::size_t length = std::strlen(line);
+	while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) {
+		line[--length] = '\0';
+	}
+	return line;
+}
+
+// "_S", "_C", "_L" and so on: the two characters that open a CWCheat line.
+bool Tagged(const char *line, char tag) {
+	return line[0] == '_' && line[1] == tag;
+}
+
+}  // namespace
+
+Cheats::Import Cheats::ImportFromDatabase(int *added) {
+	if (added) {
+		*added = 0;
+	}
+	// A section heading is the disc id split with a dash: ULUS10490 becomes
+	// "_S ULUS-10490". An id that is not nine characters cannot have one.
+	if (discId_.size() != 9) {
+		return Import::noGame;
+	}
+	const Path database = GetSysDirectory(DIRECTORY_CHEATS) / "cheat.db";
+	FILE *in = File::OpenCFile(database, "rt");
+	if (!in) {
+		psp5::Trace("cheats: no database at %s", database.c_str());
+		return Import::noFile;
+	}
+
+	const std::string heading = "_S " + discId_.substr(0, 4) + "-" + discId_.substr(4);
+
+	// What the game's file already has, by name, so importing a second time
+	// does not double every cheat.
+	std::vector<std::string> known;
+	known.reserve(entries_.size());
+	for (const CheatEntry &entry : entries_) {
+		known.push_back(entry.name);
+	}
+
+	std::vector<std::string> title;
+	std::vector<std::string> lines;
+	char buffer[2048] {};
+	bool inGame = false;
+	bool inCheat = false;
+	int found = 0;
+
+	while (!feof(in)) {
+		const char *line = ReadLine(buffer, sizeof(buffer), in);
+		if (!line) {
+			continue;
 		}
-		g_enabled_dirty = false;
+		if (Tagged(line, 'S')) {
+			inGame = heading == line;
+			inCheat = false;
+		} else if (inGame && Tagged(line, 'C')) {
+			// "_C0 " and "_C1 " are both four characters before the name.
+			const std::string name = std::string(line).substr(4);
+			inCheat = std::find(known.begin(), known.end(), name) == known.end();
+		}
+		if (!inGame) {
+			// Only the first matching section is taken: a database can list an
+			// id twice, and reading both would import the same codes twice.
+			if (!lines.empty()) {
+				break;
+			}
+			continue;
+		}
+		if ((Tagged(line, 'S') || Tagged(line, 'G')) && title.size() < 2) {
+			title.push_back(line);
+		} else if (inCheat && (Tagged(line, 'C') || Tagged(line, 'L') || line[0] == '/' ||
+		                       line[0] == '#')) {
+			lines.push_back(line);
+			++found;
+		}
 	}
-	// Only the mode psp5 entered: in a running game PPSSPP owns it.
-	if (scoped && g_Config.IsGameSpecific()) {
-		g_Config.UnloadGameConfig();
+	fclose(in);
+
+	if (lines.empty()) {
+		psp5::Trace("cheats: nothing new in the database for %s", discId_.c_str());
+		return Import::none;
 	}
-	g_scoped_here = false;
-	g_switch_game.clear();
+
+	// A cheat file opens with its own `_S`/`_G` heading. Where the game has no
+	// file yet, or one that does not begin with a heading, the database's goes
+	// in front of what is being appended.
+	const Path file = CWCheatEngine(discId_).CheatFilename();
+	std::string first;
+	if (FILE *existing = File::OpenCFile(file, "rt")) {
+		char head[2048];
+		if (const char *line = ReadLine(head, sizeof(head), existing)) {
+			first = line;
+		}
+		fclose(existing);
+	}
+	if (first.size() < 2 || first[0] != '_' || first[1] != 'S') {
+		lines.insert(lines.begin(), title.begin(), title.end());
+	}
+
+	FILE *out = File::OpenCFile(file, "at");
+	if (!out) {
+		psp5::Trace("cheats: cannot write %s", file.c_str());
+		return Import::failed;
+	}
+	fputc('\n', out);
+	for (const std::string &line : lines) {
+		fprintf(out, "%s\n", line.c_str());
+	}
+	fclose(out);
+	// Readable over FTP, like everything else psp5 writes under the title.
+	chmod(file.c_str(), 0666);
+
+	psp5::Trace("cheats: imported %d line(s) for %s", found, discId_.c_str());
+	if (added) {
+		*added = found;
+	}
+
+	// Re-read, so the panel shows what was just added.
+	const std::string disc = discId_;
+	Load(disc);
+	return Import::added;
 }
 
 void Cheats::Clear() {

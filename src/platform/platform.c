@@ -237,14 +237,21 @@ pad_open(void)
    return opened;
 }
 
+/* psp5: the raw position, with no dead zone of its own.
+ *
+ * This used to cut a dead zone per axis and rescale what was left. PPSSPP then
+ * cut its own on top - AnalogDeadzone, 0.15 by default, measured against
+ * max(|x|,|y|) - and two dead zones in series make a square one: on a diagonal
+ * both axes have to clear the first zone before their larger of the two can
+ * clear the second, so about forty per cent more travel was needed at 45
+ * degrees than straight up. The stick appeared to stop in the corners.
+ *
+ * One dead zone, and PPSSPP's, which is the one the player can set. */
 static float
 stick(uint8_t value)
 {
    const float v = ((float)value - 128.0f) / 127.0f;
-   const float dead = 0.12f;
-   if (v > -dead && v < dead)
-      return 0.0f;
-   return v > 0 ? (v - dead) / (1.0f - dead) : (v + dead) / (1.0f - dead);
+   return v < -1.0f ? -1.0f : (v > 1.0f ? 1.0f : v);
 }
 
 static void

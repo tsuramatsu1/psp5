@@ -39,4 +39,8 @@ struct GameArt {
 // with every field empty means the file is a game but carries no artwork.
 bool LoadGameArt(const std::string &path, GameArt *out);
 
+// PNG bytes to RGBA. Used for the artwork inside a game image, and for the
+// achievement badges psp5 downloads.
+bool DecodePng(const std::string &bytes, Artwork *out);
+
 }  // namespace psp5

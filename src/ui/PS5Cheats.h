@@ -47,6 +47,29 @@ public:
 
 	bool dirty() const { return dirty_; }
 
+	// ---- importing from PSP/Cheats/cheat.db ----
+	//
+	// The CWCheat database everyone passes around: one file holding the codes
+	// for thousands of games, each game under an `_S XXXX-XXXXX` line. PPSSPP
+	// offers this on its own cheat screen, which psp5 does not show, so the
+	// parsing is repeated here to the same rules - match the game's section,
+	// take its `_C`/`_L` lines and the comments between them, skip any cheat
+	// whose name is already in the game's file, and append the rest.
+	enum class Import {
+		added,      // ... and how many is in the count
+		none,       // the database has nothing new for this game
+		noFile,     // there is no cheat.db to read
+		noGame,     // no disc id, so no section to look for
+		failed,     // the game's cheat file could not be written
+	};
+
+	// Where cheat.db is, or would be.
+	static std::string DatabasePath();
+	static bool DatabaseExists();
+
+	// Appends what the database has for this game, then re-reads the file.
+	Import ImportFromDatabase(int *added);
+
 private:
 	std::vector<CheatEntry> entries_;
 	std::string path_;

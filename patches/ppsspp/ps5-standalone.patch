@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e18a1387..2230a2173 100644
+index 8e18a1387..819e6ea35 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -282,6 +282,27 @@ endif()
@@ -52,7 +52,7 @@ index 8e18a1387..2230a2173 100644
  else()
  	if(GOLD)
  		set(TargetBin PPSSPPGold)
-@@ -3031,6 +3067,76 @@ if(LIBRETRO)
+@@ -3031,6 +3067,77 @@ if(LIBRETRO)
  	add_subdirectory(libretro)
  endif()
  
@@ -108,6 +108,7 @@ index 8e18a1387..2230a2173 100644
 +			${PSP5_SRC_DIR}/ui/volk/volk.c
 +			${PSP5_SRC_DIR}/ui/HuiPlatform.cpp
 +			${PSP5_SRC_DIR}/ui/PS5AuroraLauncher.cpp
++			${PSP5_SRC_DIR}/ui/PS5GameAchievements.cpp
 +			${PSP5_SRC_DIR}/ui/PS5GameArt.cpp
 +			${PSP5_SRC_DIR}/ui/PS5GameLibrary.cpp
 +			${PSP5_SRC_DIR}/ui/PS5GameSound.cpp
@@ -335,6 +336,26 @@ index 597ea5d4e..208b129a1 100644
  void __CheatDoState(PointerWrap &p) {
  	auto s = p.Section("CwCheat", 0, 2);
  	if (!s) {
+diff --git a/Core/RetroAchievements.cpp b/Core/RetroAchievements.cpp
+index d0f670118..a73fcbbfe 100644
+--- a/Core/RetroAchievements.cpp
++++ b/Core/RetroAchievements.cpp
+@@ -267,6 +267,15 @@ static uint32_t read_memory_callback(uint32_t address, uint8_t *buffer, uint32_t
+ 	uint32_t orig_address = address;
+ 	address += PSP_MEMORY_OFFSET;
+ 
++#if PPSSPP_PLATFORM(PS5)
++	// psp5 reads a game's achievements before it is played, with no guest
++	// memory mapped. Nothing is readable then, and saying so is what rcheevos
++	// expects for an address it cannot have.
++	if (!Memory::base) {
++		return 0;
++	}
++#endif
++
+ 	if (!Memory::IsValidRange(address, num_bytes)) {
+ 		// Some achievement packs are really, really spammy.
+ 		// So we'll just count the bad accesses.
 diff --git a/UI/BackgroundAudio.cpp b/UI/BackgroundAudio.cpp
 index 63f1ed8ac..cb0e2e526 100644
 --- a/UI/BackgroundAudio.cpp
@@ -411,30 +432,54 @@ index 63f1ed8ac..cb0e2e526 100644
  	std::lock_guard<std::mutex> lock(mutex_);
  
 diff --git a/UI/EmuScreen.cpp b/UI/EmuScreen.cpp
-index b29484204..eb1186a70 100644
+index b29484204..068633e7f 100644
 --- a/UI/EmuScreen.cpp
 +++ b/UI/EmuScreen.cpp
-@@ -1,5 +1,9 @@
+@@ -1,5 +1,12 @@
  // Copyright (c) 2012- PPSSPP Project.
  
 +// psp5: declared here rather than beside the drawing hooks further down, which
 +// come long after the boot code that asks it.
 +extern "C" bool PS5_AchievementsEnabled();
++extern "C" bool PS5_ResumeRequested();
++extern "C" bool PS5_HardcoreEnabled();
++extern "C" bool PS5_CheatsEnabled();
 +
  // This program is free software: you can redistribute it and/or modify
  // it under the terms of the GNU General Public License as published by
  // the Free Software Foundation, version 2.0 or later versions.
-@@ -363,6 +367,9 @@ void EmuScreen::bootComplete() {
+@@ -363,6 +370,16 @@ void EmuScreen::bootComplete() {
  	}, (void *)this);
  
  	// Initialize retroachievements, now that we're on the right thread.
 +#if PPSSPP_PLATFORM(PS5)
 +	g_Config.bAchievementsEnable = PS5_AchievementsEnabled();
++	// Hardcore mode is PPSSPP's default and it switches off every save state,
++	// silently. psp5 defaults it the other way and offers it in its settings.
++	g_Config.bAchievementsHardcoreMode = PS5_HardcoreEnabled();
++	// Cheats are psp5's answer too, for the same reason: EnableCheats is a
++	// per-game setting, so a game ini written before this change still has one
++	// and LoadGameConfig would put it back.
++	g_Config.bEnableCheats = PS5_CheatsEnabled();
 +#endif
  	if (g_Config.bAchievementsEnable) {
  		std::string errorString;
  		Achievements::SetGame(PSP_CoreParameter().fileToStart, PSP_CoreParameter().fileType, PSP_LoadedFile());
-@@ -1486,7 +1493,9 @@ void EmuScreen::update() {
+@@ -389,8 +406,11 @@ void EmuScreen::bootComplete() {
+ 	System_Notify(SystemNotification::DISASSEMBLY);
+ 
+ 	NOTICE_LOG(Log::Boot, "Booted %s...", PSP_CoreParameter().fileToStart.c_str());
+-	if (!Achievements::HardcoreModeActive() && !bootIsReset_) {
+-		// Don't auto-load savestates in hardcore mode.
++	if (!bootIsReset_) {
++		// psp5: not gated on hardcore mode here. A load is refused further down,
++		// inside SaveState::Enqueue, which is where PPSSPP enforces the rule for
++		// every other caller too - while this gate also skipped psp5's Resume,
++		// which is reached through AutoLoadSaveState and is the only way in.
+ 		AutoLoadSaveState();
+ 	}
+ 
+@@ -1486,7 +1506,9 @@ void EmuScreen::update() {
  
  	if (pauseTrigger_) {
  		pauseTrigger_ = false;
@@ -444,7 +489,7 @@ index b29484204..eb1186a70 100644
  	}
  
  	if (!PSP_IsInited())
-@@ -1933,6 +1942,11 @@ void EmuScreen::runImDebugger() {
+@@ -1933,6 +1955,11 @@ void EmuScreen::runImDebugger() {
  	}
  }
  
@@ -456,7 +501,7 @@ index b29484204..eb1186a70 100644
  void EmuScreen::renderImDebugger() {
  	if (g_Config.bShowImDebugger) {
  		Draw::DrawContext *draw = screenManager()->getDrawContext();
-@@ -1943,6 +1957,13 @@ void EmuScreen::renderImDebugger() {
+@@ -1943,6 +1970,13 @@ void EmuScreen::renderImDebugger() {
  }
  
  bool EmuScreen::hasVisibleUI() {
@@ -470,7 +515,7 @@ index b29484204..eb1186a70 100644
  	// Regular but uncommon UI.
  	if (saveStatePreview_->GetVisibility() != UI::V_GONE || loadingSpinner_->GetVisibility() == UI::V_VISIBLE)
  		return true;
-@@ -1988,6 +2009,13 @@ void EmuScreen::renderUI() {
+@@ -1988,6 +2022,13 @@ void EmuScreen::renderUI() {
  		}
  	}
  
@@ -484,6 +529,27 @@ index b29484204..eb1186a70 100644
  #ifdef USE_PROFILER
  	if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::FRAME_PROFILE && PSP_IsInited()) {
  		DrawProfile(*ctx);
+@@ -2037,6 +2078,20 @@ void EmuScreen::AutoLoadSaveState() {
+ 
+ 	std::string gamePrefix = SaveState::GetGamePrefix(g_paramSFO);
+ 
++#if PPSSPP_PLATFORM(PS5)
++	// psp5: Resume, chosen on the home screen, for this boot only.
++	if (PS5_ResumeRequested()) {
++		const int slot = SaveState::GetNewestSlot(gamePrefix);
++		if (slot != -1) {
++			SaveState::LoadSlot(gamePrefix, slot, [this](SaveState::Status status, std::string_view message) {
++				AfterSaveStateAction(status, message);
++			});
++			g_Config.iCurrentStateSlot = slot;
++		}
++		return;
++	}
++#endif
++
+ 	//check if save state has save, if so, load
+ 	switch (g_Config.iAutoLoadSaveState) {
+ 	case (int)AutoLoadSaveState::OFF: // "AutoLoad Off"
 diff --git a/UI/MainScreen.cpp b/UI/MainScreen.cpp
 index 1af913cbc..7c95c0081 100644
 --- a/UI/MainScreen.cpp
@@ -569,6 +635,29 @@ index 4a2692496..06fe2a788 100644
 +
  void NativeFrame(GraphicsContext *graphicsContext) {
  	PROFILE_END_FRAME();
+ 
+diff --git a/UI/OnScreenDisplay.cpp b/UI/OnScreenDisplay.cpp
+index 1cc1923ec..ac2b834a1 100644
+--- a/UI/OnScreenDisplay.cpp
++++ b/UI/OnScreenDisplay.cpp
+@@ -1,6 +1,7 @@
+ #include <algorithm>
+ #include <sstream>
+ 
++#include "ppsspp_config.h"
+ #include "UI/OnScreenDisplay.h"
+ 
+ #include "Common/Data/Color/RGBAUtil.h"
+@@ -110,6 +111,10 @@ void OnScreenMessagesView::Draw(UIContext &dc) {
+ 	if (g_TakeScreenshot) {
+ 		return;
+ 	}
++#if PPSSPP_PLATFORM(PS5)
++	// psp5 has its own interface, and PPSSPP's messages are not part of it.
++	return;
++#endif
+ 
+ 	dc.Flush();
  
 diff --git a/ext/libkirk/AES.h b/ext/libkirk/AES.h
 index ee61f4649..c44b48ca4 100644

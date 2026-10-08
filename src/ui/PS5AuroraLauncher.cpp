@@ -27,11 +27,13 @@
 #include "core/settings.hpp"
 #include "audio/cues.hpp"
 #include "audio/mixer.hpp"
+#include "audio/wav.hpp"
 #include "ui/feedback.hpp"
 #include "demo/catalog.hpp"
 
 #include "PS5GameLibrary.h"
 #include "PS5GameSound.h"
+#include "PS5GameAchievements.h"
 #include "PS5Prefs.h"
 #include "PS5Settings.h"
 
@@ -41,7 +43,10 @@ extern "C" void PS5_PumpNetwork();
 #include "gfx/vk/vk_renderer.hpp"
 #include "ui/fonts.hpp"
 
+#include <algorithm>
 #include <cstring>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include "PS5Log.h"
 #include "PS5Paths.h"
@@ -59,12 +64,82 @@ namespace {
 const char *const kFontDir = "/app0/ui/fonts";
 const char *const kSoundDir = "/app0/ui/sfx";
 
-// Which of the kit's two recorded sets the player chose. A cue a set does not
-// have falls back to the other, and then to a synthesised tone.
+// Every sound set installed: one folder per set under /app0/ui/sfx, the kit's
+// two and psp5's own from tools/make-sounds.py. Listed rather than hard-coded,
+// so a set is added by dropping a folder in beside the others.
+std::vector<std::string> InstalledSoundSets() {
+	std::vector<std::string> names;
+	DIR *dir = opendir(kSoundDir);
+	if (!dir) {
+		return names;
+	}
+	while (const dirent *entry = readdir(dir)) {
+		if (entry->d_name[0] == '.') {
+			continue;
+		}
+		std::string path = std::string(kSoundDir) + "/" + entry->d_name;
+		struct stat info {};
+		if (stat(path.c_str(), &info) == 0 && S_ISDIR(info.st_mode)) {
+			names.push_back(entry->d_name);
+		}
+	}
+	closedir(dir);
+	std::sort(names.begin(), names.end());
+	return names;
+}
+
+// Reads one set's "<cue>_NN.wav" files into the bank.
+//
+// The kit's own loader scans for the two sets its SoundSet enum names, and psp5
+// offers more than two - so psp5 reads the chosen folder itself and puts it in
+// one slot. Only ever one set is loaded, so which slot it is does not matter;
+// glass is the one everything then asks for.
+int LoadSoundSet(hui::audio::SoundBank &bank, const std::string &set) {
+	DIR *dir = opendir((std::string(kSoundDir) + "/" + set).c_str());
+	if (!dir) {
+		return 0;
+	}
+	int loaded = 0;
+	while (const dirent *entry = readdir(dir)) {
+		const std::string name = entry->d_name;
+		if (name.size() < 8 || name.compare(name.size() - 4, 4, ".wav") != 0) {
+			continue;
+		}
+		// "<cue>_NN.wav": the cue is everything before the last underscore.
+		const std::size_t mark = name.rfind('_');
+		if (mark == std::string::npos) {
+			continue;
+		}
+		hui::audio::Cue cue {};
+		if (!hui::audio::cue_from_name(name.substr(0, mark), &cue)) {
+			continue;
+		}
+		const std::string path = std::string(kSoundDir) + "/" + set + "/" + name;
+		FILE *fh = fopen(path.c_str(), "rb");
+		if (!fh) {
+			continue;
+		}
+		std::string data;
+		char buffer[8192];
+		while (const std::size_t got = fread(buffer, 1, sizeof(buffer), fh)) {
+			data.append(buffer, got);
+		}
+		fclose(fh);
+		hui::audio::DecodedWav wav = hui::audio::decode_wav(data);
+		if (!wav.ok()) {
+			psp5::Trace("ui: %s rejected: %s", name.c_str(), wav.error.c_str());
+			continue;
+		}
+		bank.add(hui::audio::SoundSet::glass, cue, std::move(wav.samples), wav.frames);
+		++loaded;
+	}
+	closedir(dir);
+	return loaded;
+}
+
+// One set is loaded, into this slot.
 hui::audio::SoundSet ChosenSoundSet() {
-	return psp5::prefs::soundSet() == psp5::prefs::SoundSet::paper
-	           ? hui::audio::SoundSet::paper
-	           : hui::audio::SoundSet::glass;
+	return hui::audio::SoundSet::glass;
 }
 
 // The mixer renders on the console's audio thread and is posted to from the
@@ -452,9 +527,23 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	// was before, rather than not drawing.
 	hui::audio::Mixer mixer;
 	hui::audio::SoundBank bank;
-	const hui::audio::SoundBank::Stats sounds = bank.load(kSoundDir);
-	psp5::Trace("ui: %d sound(s) from %s%s", sounds.files, kSoundDir,
-	            sounds.rejected ? " (some rejected)" : "");
+	psp5::prefs::setSoundSets(InstalledSoundSets());
+	// Which set is in the bank. The bank was filled once, at startup, so
+	// choosing another in settings changed the setting and nothing else - every
+	// set sounded like whichever one had been loaded.
+	std::string loadedSet;
+	const auto loadSounds = [&bank, &loadedSet]() {
+		if (loadedSet == psp5::prefs::soundSet()) {
+			return;
+		}
+		loadedSet = psp5::prefs::soundSet();
+		bank = hui::audio::SoundBank{};
+		const int sounds = loadedSet.empty() ? 0 : LoadSoundSet(bank, loadedSet);
+		psp5::Trace("ui: %d sound(s) from the %s set", sounds,
+		            loadedSet.empty() ? "no" : loadedSet.c_str());
+	};
+	loadSounds();
+	psp5::Trace("ui: %u sound set(s) installed", (unsigned)psp5::prefs::soundSets().size());
 	g_mixer = &mixer;
 	const bool audio = audio_start(&FillAudio, &mixer);
 	if (!audio) {
@@ -522,15 +611,26 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 		// leaves playing them to whoever owns the loop - which is here.
 		// The game's own music is not one of these, so switching the menu's
 		// sounds off leaves it playing.
+		// Cheap when nothing changed: it compares two short strings.
+		loadSounds();
 		if (psp5::MenuSoundsEnabled()) {
 			for (const hui::audio::CueEvent &cue : feedback.cues) {
 				bank.play(mixer, ChosenSoundSet(), cue);
 			}
 		}
 		GameSoundPlayer().Update(mixer, dt);
+		// Achievement badges that have arrived become textures here, where the
+		// renderer is; the view that holds them never sees one.
+		psp5::GameAchievementList().UploadBadges([&renderer](const psp5::Artwork &art) {
+			return renderer.create_texture(art.width, art.height, art.rgba.data());
+		});
+		psp5::GameAchievementList().ReleaseBadges(
+		    [&renderer](std::uint32_t texture) { renderer.destroy_texture(texture); });
 		// Nothing else does while the shelf is up: PPSSPP's own loop, which
 		// carries this queue, only runs inside a game.
-		PS5_PumpNetwork();
+		if (!psp5::AchievementsIdentifying()) {
+			PS5_PumpNetwork();
+		}
 
 		hui::app::Frame frame;
 		aurora->draw(frame);
@@ -585,6 +685,9 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	psp5::Trace("ui: leaving the home screen");
 	Library().Release(renderer);
 	aurora.reset();
+	psp5::GameAchievementList().Close();
+	psp5::GameAchievementList().ReleaseBadges(
+	    [&renderer](std::uint32_t texture) { renderer.destroy_texture(texture); });
 	renderer.release();
 	surface.End();
 	return true;
@@ -614,6 +717,14 @@ const std::string &PendingLaunch() {
 
 const std::string &PendingLaunchDiscId() {
 	return g_pending_disc_id;
+}
+
+// Whether this boot was asked to resume. Read by PPSSPP once the game is
+// identified, which is the only point at which the save state's name is known.
+bool g_resumeRequested = false;
+
+void SetResumeRequested(bool resume) {
+	g_resumeRequested = resume;
 }
 
 bool PendingLaunchResumes() {
@@ -651,4 +762,12 @@ extern "C" void PS5_NotifyGameEnded() {
 	// each turn of the frame loop.
 	psp5::Trace("the game ended - back to the shelf");
 	psp5::g_game_ended = true;
+}
+
+// Asked by PPSSPP's EmuScreen as a game finishes booting.
+extern "C" bool PS5_ResumeRequested() {
+	const bool resume = psp5::g_resumeRequested;
+	// Once only: this boot was asked to resume, the next one is asked afresh.
+	psp5::g_resumeRequested = false;
+	return resume;
 }

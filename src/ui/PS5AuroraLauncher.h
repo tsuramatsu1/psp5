@@ -57,6 +57,10 @@ bool RunAuroraLauncher(const AuroraDevice &gpu);
 void RequestLaunch(const std::string &path, const std::string &discId, bool resume = false);
 // Whether the chosen game should pick up where it was left.
 bool PendingLaunchResumes();
+// Whether this boot should load the newest save state once the game is
+// identified. Kept here rather than in PPSSPP's iAutoLoadSaveState, which is a
+// per-game setting that the game's own config overwrites during the boot.
+void SetResumeRequested(bool resume);
 const std::string &PendingLaunch();
 // The chosen game's PARAM.SFO DISC_ID, which names its cheat file. Empty when
 // the game carries none, in which case it has no cheats to show either.

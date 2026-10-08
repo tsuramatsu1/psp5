@@ -248,8 +248,13 @@ if [[ -d $kit/assets/audio/sfx ]]; then
 	mkdir -p "$app/ui"
 	rm -rf -- "$app/ui/sfx"
 	cp -a -- "$kit/assets/audio/sfx" "$app/ui/sfx"
-	printf '==> staged %s kit sounds
-' "$(find "$app/ui/sfx" -type f | wc -l)"
+	# psp5's own sets, drawn by tools/make-sounds.py, beside the kit's two. A
+	# set is just a folder of "<cue>_NN.wav", so adding one is adding a folder.
+	if [[ -d $root/assets/sfx ]]; then
+		cp -a -- "$root/assets/sfx/." "$app/ui/sfx/"
+	fi
+	printf '==> staged %s sounds in %s set(s)
+' "$(find "$app/ui/sfx" -type f | wc -l)" "$(find "$app/ui/sfx" -mindepth 1 -maxdepth 1 -type d | wc -l)"
 fi
 
 # Everything a title creates must be reachable over FTP, which runs as another

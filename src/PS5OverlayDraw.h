@@ -28,18 +28,28 @@ namespace psp5 {
 // The kit's "Code" theme (src/ui/theme.cpp): ink-blue night, hairline borders,
 // a green call to action, blue focus. Taken as it is defined there rather than
 // approximated, so the panels match the design they name.
-constexpr uint32_t kPage = 0xFF000000;       // the bar itself
-constexpr uint32_t kSurface = 0xFF161B22;    // a row at rest
-constexpr uint32_t kSurfaceHigh = 0xFF21262D; // ... and under the cursor
-constexpr uint32_t kInk = 0xFFE6EDF3;
-constexpr uint32_t kInkDim = 0xFF8B949E;
-constexpr uint32_t kInkFaint = 0xFF6E7681;
-constexpr uint32_t kPrimary = 0xFF238636;    // on, and anything that acts
-constexpr uint32_t kAccent = 0xFF1F6FEB;     // focus
-constexpr uint32_t kOutline = 0xFF30363D;    // hairlines
-// Opaque: an overlay over a running game is easier to read against nothing
-// than against whatever happens to be moving behind it.
-constexpr uint32_t kShade = 0xFF000000;      // the game, behind the bar
+// The home screen's palette, because these panels open over a game that was
+// launched from it and should look like the same program. Aurora's accent is
+// the pale cyan; everything else is white at an alpha, over black.
+constexpr uint32_t kPage = 0xFF000000;        // the bar itself
+constexpr uint32_t kSurface = 0x0DFFFFFF;     // a row at rest
+constexpr uint32_t kSurfaceHigh = 0x1AFFFFFF; // ... and under the cursor
+constexpr uint32_t kInk = 0xFFFFFFFF;
+constexpr uint32_t kInkDim = 0xB3FFFFFF;
+constexpr uint32_t kInkFaint = 0x80FFFFFF;
+// The console's own blue, #0070D1, so these panels read as system interface
+// over a game rather than as a theme of their own.
+//
+// Note the byte order: PPSSPP stores a colour as 0xAABBGGRR, not 0xAARRGGBB,
+// so the red and blue bytes are the other way round from the hex above. Writing
+// one as it reads is how the accent came out yellow-green.
+constexpr uint32_t kPrimary = 0xFFD17000;    // on, and anything that acts
+constexpr uint32_t kAccent = 0xFFD17000;     // focus
+constexpr uint32_t kOutline = 0x2EFFFFFF;    // hairlines
+// The panel itself is solid black; this is what lies over the rest of the
+// screen. Dark enough to read against and no darker - fully opaque hid the game
+// completely, which made opening the menu look like the game had crashed.
+constexpr uint32_t kShade = 0xB8090705;      // the game, behind the bar
 
 constexpr float kRadius = 10.0f;
 
@@ -56,16 +66,22 @@ inline void FillRound(UIContext *ui, const Bounds &b, float radius, uint32_t col
 	// The middle, full width, between the two corner bands.
 	ui->FillRect(UI::Drawable(color), Bounds(b.x, b.y + r, b.w, b.h - r * 2.0f));
 	// Then one strip per row of each band, inset by the circle it follows.
+	//
+	// The strips abut exactly and never overlap, and none of them overlaps the
+	// middle. They used to run half a pixel long to close seams, which is fine
+	// for an opaque fill and wrong for a translucent one: every overlap drew the
+	// colour twice, so a 10% white highlight came out banded, with a darker
+	// stripe across the middle where only one rectangle had been laid down.
 	const int steps = std::max(1, (int)r);
+	const float h = r / (float)steps;
 	for (int i = 0; i < steps; ++i) {
-		const float dy = r - ((float)i + 0.5f);
+		const float dy = r - ((float)i + 0.5f) * h;
 		const float inset = r - std::sqrt(std::max(0.0f, r * r - dy * dy));
-		const float h = r / (float)steps;
 		const float x = b.x + inset;
 		const float w = b.w - inset * 2.0f;
-		ui->FillRect(UI::Drawable(color), Bounds(x, b.y + (float)i * h, w, h + 0.5f));
+		ui->FillRect(UI::Drawable(color), Bounds(x, b.y + (float)i * h, w, h));
 		ui->FillRect(UI::Drawable(color),
-		             Bounds(x, b.y + b.h - (float)(i + 1) * h - 0.5f, w, h + 0.5f));
+		             Bounds(x, b.y + b.h - (float)(i + 1) * h, w, h));
 	}
 }
 

@@ -170,6 +170,7 @@ new = r"""if(PPSSPP_PS5)
 			${PSP5_SRC_DIR}/ui/volk/volk.c
 			${PSP5_SRC_DIR}/ui/HuiPlatform.cpp
 			${PSP5_SRC_DIR}/ui/PS5AuroraLauncher.cpp
+			${PSP5_SRC_DIR}/ui/PS5GameAchievements.cpp
 			${PSP5_SRC_DIR}/ui/PS5GameArt.cpp
 			${PSP5_SRC_DIR}/ui/PS5GameLibrary.cpp
 			${PSP5_SRC_DIR}/ui/PS5GameSound.cpp
@@ -742,6 +743,9 @@ new = """// Copyright (c) 2012- PPSSPP Project.
 // psp5: declared here rather than beside the drawing hooks further down, which
 // come long after the boot code that asks it.
 extern "C" bool PS5_AchievementsEnabled();
+extern "C" bool PS5_ResumeRequested();
+extern "C" bool PS5_HardcoreEnabled();
+extern "C" bool PS5_CheatsEnabled();
 """
 assert t.count(old) == 1, "emuscreen top anchor"
 t = t.replace(old, new, 1)
@@ -751,9 +755,69 @@ old = """	// Initialize retroachievements, now that we're on the right thread.
 new = """	// Initialize retroachievements, now that we're on the right thread.
 #if PPSSPP_PLATFORM(PS5)
 	g_Config.bAchievementsEnable = PS5_AchievementsEnabled();
+	// Hardcore mode is PPSSPP's default and it switches off every save state,
+	// silently. psp5 defaults it the other way and offers it in its settings.
+	g_Config.bAchievementsHardcoreMode = PS5_HardcoreEnabled();
+	// Cheats are psp5's answer too, for the same reason: EnableCheats is a
+	// per-game setting, so a game ini written before this change still has one
+	// and LoadGameConfig would put it back.
+	g_Config.bEnableCheats = PS5_CheatsEnabled();
 #endif
 	if (g_Config.bAchievementsEnable) {"""
 assert t.count(old) == 1, "achievements boot anchor"
+t = t.replace(old, new, 1)
+
+# psp5's Resume boots the game and loads its newest state. It cannot ask for that
+# through g_Config.iAutoLoadSaveState, which is one of PPSSPP's per-game settings:
+# Load_PSP_ISO calls LoadGameConfig partway through the boot, after psp5 has set
+# it and before this reads it, so a game with a config of its own - which psp5
+# writes the moment a cheat is toggled for it - put the setting back to off and
+# Resume did nothing. Asked of psp5 directly instead, and the slot is resolved
+# here because a state file is named with the disc version, which is known only
+# once the game has been identified.
+old = """	if (!Achievements::HardcoreModeActive() && !bootIsReset_) {
+		// Don't auto-load savestates in hardcore mode.
+		AutoLoadSaveState();"""
+new = """	if (!bootIsReset_) {
+		// psp5: not gated on hardcore mode here. A load is refused further down,
+		// inside SaveState::Enqueue, which is where PPSSPP enforces the rule for
+		// every other caller too - while this gate also skipped psp5's Resume,
+		// which is reached through AutoLoadSaveState and is the only way in.
+		AutoLoadSaveState();"""
+assert t.count(old) == 1, "autoload call anchor"
+t = t.replace(old, new, 1)
+
+old = """void EmuScreen::AutoLoadSaveState() {
+	if (autoLoadFailed_) {
+		return;
+	}
+
+	int autoSlot = -1;
+
+	std::string gamePrefix = SaveState::GetGamePrefix(g_paramSFO);"""
+new = """void EmuScreen::AutoLoadSaveState() {
+	if (autoLoadFailed_) {
+		return;
+	}
+
+	int autoSlot = -1;
+
+	std::string gamePrefix = SaveState::GetGamePrefix(g_paramSFO);
+
+#if PPSSPP_PLATFORM(PS5)
+	// psp5: Resume, chosen on the home screen, for this boot only.
+	if (PS5_ResumeRequested()) {
+		const int slot = SaveState::GetNewestSlot(gamePrefix);
+		if (slot != -1) {
+			SaveState::LoadSlot(gamePrefix, slot, [this](SaveState::Status status, std::string_view message) {
+				AfterSaveStateAction(status, message);
+			});
+			g_Config.iCurrentStateSlot = slot;
+		}
+		return;
+	}
+#endif"""
+assert t.count(old) == 1, "autoload anchor"
 t = t.replace(old, new, 1)
 
 old = """#if PPSSPP_PLATFORM(PS5)
@@ -765,6 +829,71 @@ extern "C" void PS5_DrawOverlays(UIContext *ui);
 extern "C" bool PS5_WantsOverlay();
 #endif"""
 assert t.count(old) == 1, "achievements declaration anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# PPSSPP's on-screen messages. psp5 draws its own interface and none of these
+# belong to it - the one that prompted this was "Game controller connected:
+# DualSense Wireless Controller" across the top of a game as it started, which
+# is the console telling the player something the console already told them.
+#
+# Cut at the view rather than at each g_OSD.Show: the calls are scattered
+# through the core, the emulator keeps its own record of what it has shown
+# either way, and a new call site cannot slip a toast past this.
+p = D / 'UI/OnScreenDisplay.cpp'
+t = p.read_text()
+# PPSSPP_PLATFORM comes from ppsspp_config.h, which this file does not include.
+old = """#include "UI/OnScreenDisplay.h\""""
+new = """#include "ppsspp_config.h"
+#include "UI/OnScreenDisplay.h\""""
+assert t.count(old) == 1, "osd include anchor"
+t = t.replace(old, new, 1)
+
+old = """void OnScreenMessagesView::Draw(UIContext &dc) {
+	if (g_TakeScreenshot) {
+		return;
+	}"""
+new = """void OnScreenMessagesView::Draw(UIContext &dc) {
+	if (g_TakeScreenshot) {
+		return;
+	}
+#if PPSSPP_PLATFORM(PS5)
+	// psp5 has its own interface, and PPSSPP's messages are not part of it.
+	return;
+#endif"""
+assert t.count(old) == 1, "osd draw anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# Reading a game's achievements from the home screen loads it into rcheevos,
+# which then evaluates its conditions - and evaluating a condition reads the
+# guest's memory. No game is running there, so Memory::base is null.
+#
+# The guard already in this function does not catch it: IsValidAddress returns
+# true for any address in the 0x08000000 window whether or not it is backed, so
+# a read fell through to MemcpyUnchecked on a null base and the title died. It
+# only happened for games that have achievements, because a game with none has
+# no conditions to evaluate - which is exactly how it looked from the outside.
+p = D / 'Core/RetroAchievements.cpp'
+t = p.read_text()
+old = """	uint32_t orig_address = address;
+	address += PSP_MEMORY_OFFSET;
+
+	if (!Memory::IsValidRange(address, num_bytes)) {"""
+new = """	uint32_t orig_address = address;
+	address += PSP_MEMORY_OFFSET;
+
+#if PPSSPP_PLATFORM(PS5)
+	// psp5 reads a game's achievements before it is played, with no guest
+	// memory mapped. Nothing is readable then, and saying so is what rcheevos
+	// expects for an address it cannot have.
+	if (!Memory::base) {
+		return 0;
+	}
+#endif
+
+	if (!Memory::IsValidRange(address, num_bytes)) {"""
+assert t.count(old) == 1, "read_memory anchor"
 t = t.replace(old, new, 1)
 write(p, t)
 

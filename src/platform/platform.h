@@ -44,7 +44,7 @@ enum {
 struct pad {
    uint32_t held;    /* buttons down now */
    uint32_t pressed; /* buttons that went down since the last poll */
-   float left_x, left_y, right_x, right_y; /* -1..1, a dead zone removed; y is down-positive */
+   float left_x, left_y, right_x, right_y; /* -1..1, raw; y is down-positive */
    float l2, r2;                           /* 0..1 */
 };
 

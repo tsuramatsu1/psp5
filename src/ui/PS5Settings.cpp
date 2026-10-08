@@ -16,11 +16,15 @@
 #include <algorithm>
 #include <cstdio>
 #include <iterator>
+#include <vector>
 
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/RetroAchievements.h"
 #include "Core/SaveState.h"
+#include "Core/System.h"
+#include "Common/StringUtils.h"
+#include "Common/File/DirListing.h"
 
 #include "PS5Log.h"
 #include "ui/PS5Prefs.h"
@@ -86,7 +90,7 @@ Settings &SettingsPanel() {
 }
 
 bool MenuSoundsEnabled() {
-	return prefs::soundSet() != prefs::SoundSet::off;
+	return !prefs::soundSet().empty();
 }
 
 // Called once, after NativeInit has read the configuration: PPSSPP only builds
@@ -104,9 +108,11 @@ void ApplyAchievementsPreference() {
 	// signed in was told they were not: the token was on disk, but there was no
 	// client to present it.
 	g_Config.bAchievementsEnable = true;
+	g_Config.bAchievementsHardcoreMode = prefs::hardcore();
 	Achievements::UpdateSettings();
-	psp5::Trace("achievements: on, from psp5's own settings; client %s",
-	            Achievements::GetClient() ? "ready" : "not created");
+	psp5::Trace("achievements: on, from psp5's own settings; client %s, hardcore %s",
+	            Achievements::GetClient() ? "ready" : "not created",
+	            prefs::hardcore() ? "on" : "off");
 }
 
 // Asked by PPSSPP as a game boots (see tools/mkpatch.py): whether achievements
@@ -114,6 +120,12 @@ void ApplyAchievementsPreference() {
 // they signed in.
 extern "C" bool PS5_AchievementsEnabled() {
 	return psp5::prefs::achievements();
+}
+
+// Likewise: bAchievementsHardcoreMode is per-game too, and PPSSPP's default for
+// it is on - which silently disables every save state.
+extern "C" bool PS5_HardcoreEnabled() {
+	return psp5::prefs::hardcore();
 }
 
 std::string PlayedTime(const std::string &discId) {
@@ -128,25 +140,39 @@ std::string PlayedTime(const std::string &discId) {
 }
 
 // The one phrase both the hero and the details sheet use, so the two cannot
-// drift apart. PPSSPP's own string is a duration ("1h 23m"), not a count of
-// hours, so the label carries the sense and the value carries the figure.
+// drift apart. PPSSPP's string already reads "Time Played: 0h 30m 30s", so
+// nothing is added to it: a label in front of it said the same thing twice, and
+// the middle dot that separated them is not in the kit's font atlas - which has
+// about 113 glyphs - so it drew as a question mark.
 std::string PlayedLabel(const std::string &discId) {
 	const std::string played = PlayedTime(discId);
-	if (played.empty()) {
-		return "Not played yet";
-	}
-	return "Hours Played  Â·  " + played;
+	return played.empty() ? std::string("Not played yet") : played;
 }
 
 bool HasSaveState(const std::string &discId) {
 	if (discId.empty()) {
 		return false;
 	}
-	// PPSSPP names its states after the disc id and version together, which is
-	// what GetGamePrefix builds while a game runs. On the shelf there is no
-	// running game, so the usual version is assumed - a game whose own version
-	// differs simply shows no state to resume, rather than offering a wrong one.
-	return SaveState::GetNewestSlot(discId + "_1.00") >= 0;
+	// The state directory is read here rather than asked of SaveState, for two
+	// reasons. Its answer comes from a listing it builds in Rescan, and Rescan
+	// is only ever called for a game that is running - on the shelf that listing
+	// is empty or belongs to whatever was played last. And its file names carry
+	// the disc version as well as the id, which is in the game image and not in
+	// anything the shelf has read, so assuming "1.00" missed every game that is
+	// not that - which is what hid Resume on The 3rd Birthday.
+	//
+	// So: any <disc id>_<version>_<slot>.ppst at all.
+	std::vector<File::FileInfo> files;
+	if (!File::GetFilesInDir(GetSysDirectory(DIRECTORY_SAVESTATE), &files, nullptr, 0,
+					  discId + "_")) {
+		return false;
+	}
+	for (const File::FileInfo &file : files) {
+		if (endsWith(file.name, ".ppst") && !endsWith(file.name, ".undo.ppst")) {
+			return true;
+		}
+	}
+	return false;
 }
 
 bool AchievementsLoggedIn() {
@@ -277,7 +303,7 @@ void Settings::Rebuild() {
 	items_.push_back({"Game volume", Format("%d", g_Config.iGameVolume),
 	                  "0 to 100, in steps of five."});
 
-	items_.push_back({"Menu sounds", prefs::soundSetName(prefs::soundSet()),
+	items_.push_back({"Menu sounds", prefs::soundSetLabel(prefs::soundSet()),
 	                  "The home screen's own sounds. A game's music is separate."});
 
 	items_.push_back({"Show frame rate",
@@ -288,6 +314,9 @@ void Settings::Rebuild() {
 	                  g_Config.iAnalogFpsLimit <= 0 ? std::string("Unlimited")
 	                                                : Format("%d%%", g_Config.iAnalogFpsLimit),
 	                  "How fast the game runs while the right trigger is held."});
+
+	items_.push_back({"Achievements hardcore mode", prefs::hardcore() ? "On" : "Off",
+	                  "On earns hardcore unlocks but turns off save states entirely."});
 }
 
 void Settings::Reload() {
@@ -391,11 +420,20 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			g_Config.iGameVolume = std::clamp(g_Config.iGameVolume + delta * 5, 0, VOLUMEHI_FULL);
 			break;
 		case 7: {
-			// Off, then each set the kit records. Which one suits is a matter of
-			// taste, so it is a choice rather than something psp5 decides.
-			const int count = 3;
-			const int at = ((int)prefs::soundSet() + (delta > 0 ? 1 : count - 1)) % count;
-			prefs::setSoundSet((prefs::SoundSet)at);
+			// Off, then every set found under /app0/ui/sfx. Which one suits is a
+			// matter of taste, so it is a choice rather than something psp5
+			// decides - and adding one is adding a folder.
+			const std::vector<std::string> &sets = prefs::soundSets();
+			const int count = (int)sets.size() + 1;
+			int at = 0;
+			for (int i = 0; i < (int)sets.size(); ++i) {
+				if (sets[(std::size_t)i] == prefs::soundSet()) {
+					at = i + 1;
+					break;
+				}
+			}
+			at = ((at + delta) % count + count) % count;
+			prefs::setSoundSet(at == 0 ? std::string() : sets[(std::size_t)(at - 1)]);
 			break;
 		}
 		case 8:
@@ -414,6 +452,9 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			g_Config.iAnalogFpsLimit = limit;
 			break;
 		}
+		case 10:
+			prefs::setHardcore(!prefs::hardcore());
+			break;
 		default:
 			return false;
 	}
