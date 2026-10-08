@@ -1,7 +1,12 @@
 # psp5
 
-PPSSPP as a standalone PlayStation 5 homebrew title: a PSP emulator that boots to
-PPSSPP's own interface, renders through Vulkan on RADV, and runs the x86-64 JIT.
+**A PSP emulator for the PlayStation 5, based on [PPSSPP](https://github.com/hrydgard/ppsspp).**
+
+PPSSPP is the emulator — its interpreter and x86-64 JIT, its HLE of the PSP's
+operating system, its Vulkan renderer. psp5 is that emulator built as a
+standalone PS5 homebrew title: it boots to its own console home screen, reads
+the games off the memory stick, and runs them. None of PPSSPP's own interface is
+shown.
 
 PPSSPP already runs on the PS5 as a libretro core inside
 [PS5_RetroArch](https://github.com/mihawk-99/PS5_RetroArch). psp5 is the other
@@ -11,28 +16,50 @@ LRPS2 core.
 
 ## Status
 
-The console port itself is not new work: `patches/ppsspp/ps5-port.patch` is taken
-unmodified from PS5_RetroArch, where it is proven on hardware. What psp5 adds is
-what a title needs and a core does not.
+It runs on hardware: the title launches, the home screen draws, and games boot
+and play with sound.
 
 | | |
 | --- | --- |
-| PPSSPP's emulator core, JIT, memory arena and Vulkan backend cross-compile | **done** |
-| PPSSPP's UI and psp5's platform layer cross-compile | **done** |
-| FFmpeg cross-builds and links in (PSP video, Atrac3 audio) | **done** |
-| The title links, converts and signs | **done** — a 47 MB `eboot.bin`, integrity valid |
-| The title folder is complete | **done** — `eboot.bin`, `sce_module/libc.prx`, `sce_sys/{param.json,icon0.png}`, 190 asset files |
-| Vulkan on RADV, `VK_KHR_display` presentation | **written**, not yet run |
-| Pad, audio, title paths | **written**, not yet run |
-| Booting on a console | **not done** |
+| Launching, drawing, running a commercial ISO | **working** |
+| Home screen: the memory stick's games, with their own icons and key art | **working** |
+| Cheats, per-game, edited from the shelf or from inside a game | **working** |
+| Save states, from the in-game menu | **working** |
+| Settings, written back to PPSSPP's configuration | **working** |
+| Sound on the home screen | **not done** — the kit's cues are collected and dropped |
+| Per-game setting overrides | **not done** |
 
-**Nothing here has run on a PS5.** Everything above is a build result — the title
-is well-formed, not working. Whether it boots, draws a frame or plays a game is
-unknown, and `docs/porting-notes.md` lists what is most likely to be wrong first.
+The console port itself is not psp5's work: `patches/ppsspp/ps5-port.patch` is
+taken unmodified from PS5_RetroArch, where it is proven on hardware. What psp5
+adds is what a title needs and a libretro core does not.
 
-`sce_sys/icon0.png` is drawn by `tools/make-icon.py` (512x512, RGB, no alpha, as the
-console wants) and `tools/link-title.sh` stages it. Replace either the file or the
-script to change it.
+## Using it
+
+Copy `dist/PPSA99131/` to `/mnt/usb0/PPSA99131` on the console and install it
+with ShadowMountPlus. Games go on the emulated memory stick, which is inside the
+title's own folder:
+
+```
+PPSA99131/memstick/PSP/GAME/<your game>.iso     # also .cso, .chd, EBOOT.PBP
+PPSA99131/memstick/PSP/Cheats/<DISC_ID>.ini     # CWCheat files
+```
+
+### Controls
+
+On the home screen:
+
+| | |
+| --- | --- |
+| **L1 / R1** | Recent, A–Z, Favorites |
+| **Cross** | the game's details, and Play |
+| **Triangle** | keep a game in Favorites |
+| **OPTIONS** | settings, and *Close psp5* at the foot of them |
+
+In a game:
+
+| | |
+| --- | --- |
+| **L1 + L3** | the menu: cheats, save states, and the way out |
 
 ## What it is made of
 
@@ -41,6 +68,7 @@ script to change it.
 | The emulator | [PPSSPP](https://github.com/hrydgard/ppsspp) v1.20.4, pinned, unvendored |
 | The console port | `patches/ppsspp/ps5-port.patch`, from PS5_RetroArch |
 | The Vulkan driver | [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan)'s RADV, linked statically |
+| The home screen | [PS5_VKHomebrewUI](https://github.com/mihawk-99/PS5_VKHomebrewUI)'s kit, Aurora Shelf design |
 | The platform layer | [PS5_VulkanTemplate](https://github.com/mihawk-99/PS5_VulkanTemplate)'s `ps5/src/platform.c`, vendored in `src/platform/` (MIT) |
 | The SDK | the [PS5_PayloadSDK](https://github.com/mihawk-99/PS5_PayloadSDK) fork, for `ps5platform/{exec,shm,heap,fp}.h` |
 
@@ -73,8 +101,7 @@ export PSP5_DIST_MIRROR=/mnt/c/Users/<you>/Documents/Repos/psp5/dist
 ```
 
 It copies only after the title folder is complete, and replaces `eboot.bin`
-through a temporary name, so the mirror is never a half-written title. An ordinary
-relink moves the eboot alone; the 22 MB of assets go only when they change.
+through a temporary name, so the mirror is never a half-written title.
 
 `tools/build.sh` checks the SDK and RADV before it starts and says which one is
 wrong. It also needs zlib to be the one RADV was built with, which it finds beside
@@ -85,9 +112,6 @@ while `tools/build.sh` is run over and over. Without it `tools/build.sh` still
 works and the link says so, but the PSP's video and its Atrac3 audio are missing —
 game intros and menu backgrounds included — so a release build has it.
 
-To work on the port itself: edit `.deps/ppsspp-src`, build with `PSP5_DEV=1` to
-skip the reset, and write the patch back when it works.
-
 ## How it is put together
 
 PPSSPP's platform ports are a `main` plus a graphics context; `SDL/SDLMain.cpp` is
@@ -95,22 +119,50 @@ the desktop one. `src/` is the console's:
 
 | File | What it does |
 | --- | --- |
-| `PS5Main.cpp` | the entry point, the `System_*` host contract, pad to PPSSPP input, the run loop |
+| `PS5Main.cpp` | the entry point, the `System_*` host contract, pad to PPSSPP input, the loop |
 | `PS5VulkanContext.cpp` | PPSSPP's `GraphicsContext` on `VK_KHR_display` — no window system |
 | `PS5VulkanLoader.cpp` | the global Vulkan functions, resolved against RADV's own entry point |
 | `PS5Audio.cpp` | PPSSPP's `AudioBackend` on the console's 48 kHz output |
 | `PS5Paths.cpp` | the title's folders under `/app0`, created 0777 so FTP can reach them |
+| `PS5Overlay.cpp` | the in-game menu, drawn over the game |
+| `ui/PS5AuroraLauncher.cpp` | the home screen's own frame loop, borrowing the device |
+| `ui/PS5GameLibrary.cpp` | the memory stick's games, and a cover for each |
+| `ui/PS5GameArt.cpp` | `ICON0.PNG`, `PIC1.PNG` and `PARAM.SFO`, read out of an ISO or PBP |
+| `ui/PS5Cheats.cpp`, `ui/PS5Settings.cpp` | the cheat file, and PPSSPP's configuration |
+| `ui/kit/aurora.cpp` | psp5's copy of the kit's Aurora Shelf design |
 | `platform/` | klog, splash, pad, audio and the shell exit (vendored, MIT) |
-
-PPSSPP's own UI is the frontend. psp5 does not add a game browser or a settings
-screen, because PPSSPP has both and they are better than a new one.
 
 ### Decisions worth knowing
 
-**The two patches are kept apart.** `ps5-port.patch` is upstream's, unmodified, so
-it can be replaced wholesale when PS5_RetroArch's moves. `ps5-standalone.patch` is
-91 lines across two files: the Vulkan loader, and a PS5 branch in the platform
-selection.
+**The home screen and the emulator take turns with the device.** The kit's
+renderer and PPSSPP's render manager each assume they own the frame loop, so they
+cannot both be up: the shelf runs, hands the device back exactly as it found it,
+and PPSSPP takes it for the game. Each turn ends in `PS5VulkanContext::ShutdownDraw`.
+
+**The Aurora design is forked, not patched.** The kit's designs read a
+`demo::Catalog` that fills itself in its own constructor, so there is no seam to
+push real content through — and the kit is a pinned checkout that
+`tools/setup-kit.sh` re-fetches, so an edit in place would not survive. psp5 keeps
+its own copy of the one design it ships and drops the kit's from the build.
+
+**None of PPSSPP's interface is drawn.** Four edits in the patch do it: psp5
+hands PPSSPP an `EmuScreen` directly, so neither the logo nor the game browser is
+drawn even once; `MainScreen`'s constructor tells psp5 the game ended, and psp5
+leaves the frame loop before the switch to it takes effect; the pause menu is
+compiled out; and `ScreenManager::switchScreenNow` makes a screen switch that
+cannot be refused by one already queued.
+
+**The patches are kept apart.** `ps5-port.patch` is upstream's, unmodified, so it
+can be replaced wholesale when PS5_RetroArch's moves. `ps5-standalone.patch` is
+psp5's, generated by `tools/mkpatch.py` — each edit anchored to the text it
+replaces, with the reason beside it, so a change in the pinned PPSSPP fails loudly
+there rather than applying somewhere unintended.
+
+**Undefined weak symbols are bound to zero explicitly.** Mesa leaves ~6,700
+`radv_*` and `annotate_*` dispatch entries undefined on purpose, and the title
+converter requires a stub for every entry in `.dynsym`. `--no-dynamic-linker` used
+to drop them, but whether it does depends on the host LLVM, so `tools/link-title.sh`
+links, collects what is left, binds each with `--defsym`, and links again.
 
 **Flexible memory stays at the console default (448 MiB).** The 1 GiB a title can
 ask for in `param.json` is taken out of direct memory, and psp5's large
@@ -120,17 +172,24 @@ pool that actually matters here. `sce_sys/param.json` is where to change it.
 
 **System dialogs are refused, not ignored.** Every `System_MakeRequest` psp5 does
 not implement returns false. A request that is neither answered nor refused leaves
-PPSSPP's UI waiting for a callback that never arrives.
+PPSSPP waiting for a callback that never arrives.
+
+`sce_sys/icon0.png` is drawn by `tools/make-icon.py` (512x512, RGB, no alpha, as
+the console wants) and `tools/link-title.sh` stages it. Replace either the file or
+the script to change it.
 
 ## Licence
 
 GPL-3.0-or-later. PPSSPP is GPL-2.0-**or-later**, which permits combining it with
 the GPL-3.0-or-later platform layer and RADV build; the combined work is GPL-3.0.
 `src/platform/` is MIT, from PS5_VulkanTemplate, and keeps its notice.
+`src/ui/volk/` is MIT. `src/ui/kit/aurora.cpp` is forked from PS5_VKHomebrewUI
+(GPL-3.0-or-later) and keeps its copyright line.
 
 ## Credits
 
 The hard parts of this are other people's: **Henrik Rydgård** and PPSSPP's
-contributors for the emulator, **mihawk-99** for the PS5 Vulkan driver, the payload
-SDK fork, the platform layer and the PPSSPP port patch, and **Swordpdf** for
-PS5SX2, which is what a standalone emulator title on this stack looks like.
+contributors for the emulator this is built on, **mihawk-99** for the PS5 Vulkan
+driver, the payload SDK fork, the platform layer, the homebrew UI kit and the
+PPSSPP port patch, and **Swordpdf** for PS5SX2, which is what a standalone
+emulator title on this stack looks like.

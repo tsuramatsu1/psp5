@@ -116,6 +116,10 @@ bool Prepare() {
 	// Not fatal: PPSSPP falls back to defaults without them.
 	EnsureDir(Config());
 	EnsureDir(Cache());
+	// Cheats are read from here, one <DISC_ID>.ini per game. Made up front so
+	// there is somewhere obvious to copy a cheat file to over FTP, rather than a
+	// folder that only appears once a game has already looked for it.
+	EnsureDir(Memstick() + "/PSP/Cheats");
 	return true;
 }
 

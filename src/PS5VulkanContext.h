@@ -28,6 +28,12 @@ public:
 	bool InitDevice(std::string *errorMessage);
 	bool InitDraw(std::string *errorMessage);
 
+	// Gives the frame back: destroys PPSSPP's draw context and leaves the device,
+	// surface and a FIFO swapchain exactly as InitDevice left them, so the
+	// launcher can run again. The title alternates between the two for as long as
+	// it is open - home screen, game, home screen - and each turn ends here.
+	void ShutdownDraw();
+
 	VulkanContext *vulkan() const { return vulkan_; }
 
 	void Shutdown() override;
@@ -41,6 +47,10 @@ public:
 	int Height() const { return vulkan_ ? vulkan_->GetBackbufferHeight() : 0; }
 
 private:
+	// Destroys draw_ and the render manager with it. Shared by ShutdownDraw and
+	// Shutdown, which differ only in what they do with the device afterwards.
+	void ReleaseDraw();
+
 	Draw::DrawContext *draw_ = nullptr;
 	VulkanContext *vulkan_ = nullptr;
 	VulkanRenderManager *renderManager_ = nullptr;

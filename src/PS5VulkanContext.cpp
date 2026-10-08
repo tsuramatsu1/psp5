@@ -14,6 +14,7 @@
 #include "Core/System.h"
 #include "GPU/Vulkan/VulkanUtil.h"
 
+#include "PS5Log.h"
 #include "platform/platform.h"
 
 bool PS5VulkanContext::Init(std::string *errorMessage) {
@@ -128,10 +129,7 @@ bool PS5VulkanContext::InitDraw(std::string *errorMessage) {
 	return true;
 }
 
-void PS5VulkanContext::Shutdown() {
-	if (!vulkan_) {
-		return;
-	}
+void PS5VulkanContext::ReleaseDraw() {
 	if (draw_) {
 		draw_->HandleEvent(Draw::Event::LOST_BACKBUFFER, vulkan_->GetBackbufferWidth(),
 		                   vulkan_->GetBackbufferHeight());
@@ -139,6 +137,30 @@ void PS5VulkanContext::Shutdown() {
 	delete draw_;
 	draw_ = nullptr;
 	renderManager_ = nullptr;
+}
+
+void PS5VulkanContext::ShutdownDraw() {
+	if (!vulkan_ || !draw_) {
+		return;
+	}
+	ReleaseDraw();
+
+	// The launcher expects what InitDevice built. InitDraw replaced that
+	// swapchain with one in the present mode the configuration asked for, so put
+	// a FIFO one back; the launcher reads the handle afresh each time it runs,
+	// and FIFO is the mode it was written against.
+	vulkan_->WaitUntilQueueIdle();
+	vulkan_->DestroySwapchain();
+	if (!vulkan_->InitSwapchain(VK_PRESENT_MODE_FIFO_KHR)) {
+		psp5::Trace("graphics: could not rebuild the swapchain: %s", vulkan_->InitError().c_str());
+	}
+}
+
+void PS5VulkanContext::Shutdown() {
+	if (!vulkan_) {
+		return;
+	}
+	ReleaseDraw();
 
 	vulkan_->WaitUntilQueueIdle();
 	vulkan_->DestroySwapchain();

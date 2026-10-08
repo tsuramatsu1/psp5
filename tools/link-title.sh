@@ -82,34 +82,64 @@ else
 	echo "==> no FFmpeg (tools/build-ffmpeg.sh); PSP video and Atrac3 audio will be missing"
 fi
 
-# --no-dynamic-linker is what keeps this title convertible.
-#
 # Mesa names every Vulkan entry point in its dispatch tables through a weak
-# reference and leaves the ones this driver does not implement undefined on
+# reference, and leaves the ones this driver does not implement undefined on
 # purpose: at run time they read as null, and Mesa checks for null before calling.
-# About 6,400 radv_* and annotate_* names arrive that way. Ordinarily lld keeps an
-# undefined weak symbol in .dynsym so a dynamic linker could still resolve it, and
-# the converter requires a stub for every entry in .dynsym
-# (tooling/native/sce_module_writer.cpp) - so it stops at the first one,
-# "no public SDK stub exports required symbol radv_EnumeratePhysicalDevices".
+# About 6,700 radv_* and annotate_* names arrive that way.
 #
-# There is no dynamic linker here: the console's loader binds this title's imports
-# itself. Saying so lets lld bind those weak references to zero at link time and
-# leave them out of the dynamic table, which is exactly the null Mesa expects.
+# The converter requires a stub module to export every entry in .dynsym
+# (tooling/native/sce_module_writer.cpp), and it does not exempt weak ones, so a
+# single one of those left in the dynamic table stops it with "no public SDK stub
+# exports required symbol radv_EnumeratePhysicalDevices".
 #
-# Two things that do not work instead: a version script cannot localise a symbol
-# that is not defined (lld refuses), and -z nodynamic-undefined-weak is not in this
-# lld (18.1.3 warns "unknown -z value" and carries on).
+# --no-dynamic-linker used to be enough. Whether it is depends on the host LLVM
+# this toolchain picks up at link time - prospero-lld runs whatever ld.lld
+# prospero-llvm-config points at. Under lld 18 an undefined weak symbol was bound
+# to zero and dropped from .dynsym; under lld 20 it stays in the table whenever
+# the link contains a shared library, which this one always does, because the SDK
+# stubs are shared libraries.
+#
+# So the binding is written down instead of inferred. The title is linked, every
+# weak name still undefined afterwards and exported by no stub is bound to zero
+# with --defsym, and it is linked again. That is the same null Mesa expects, at
+# the cost of one extra link, and it no longer changes with the host toolchain.
+#
+# Two things that still do not work: a version script cannot localise a symbol
+# nothing defines, and -z nodynamic-undefined-weak is in neither lld.
+link_title() {
+	"$sdk/bin/prospero-lld" "${radv_linker_script[@]}" --eh-frame-hdr "${radv_link_flags[@]}" \
+		--version-script "$native/app-symbols.map" --exclude-libs=ALL \
+		--no-dynamic-linker "$@" \
+		-e _start -o "$work/llvm-pie.elf" \
+		"$work/obj/app_crt.o" \
+		--start-group "${psp5_libs[@]}" "${extra_libs[@]}" ${ffmpeg_libs[@]+"${ffmpeg_libs[@]}"} --end-group \
+		"$work/stubs/libSceAgc.so" "$work/stubs/libSceAgcDriver.so" \
+		"${radv_link_inputs[@]}" \
+		--as-needed "$sdk"/target/lib/*.so
+}
+
+# Every name a loadable stub exports. A weak symbol one of these provides is a
+# real import and must be left alone; only the ones nothing provides are bound.
+stub_exports() {
+	local library
+	for library in "$sdk"/target/lib/*.so "$work/stubs"/*.so; do
+		case ${library##*/} in libkernel_sys.so | libScePosixForWebKit.so) continue ;; esac
+		"$sdk/bin/llvm-nm" -D --defined-only "$library" 2>/dev/null | awk '{ print $NF }'
+	done | sort -u
+}
+
 echo "==> linking"
-"$sdk/bin/prospero-lld" "${radv_linker_script[@]}" --eh-frame-hdr "${radv_link_flags[@]}" \
-	--version-script "$native/app-symbols.map" --exclude-libs=ALL \
-	--no-dynamic-linker \
-	-e _start -o "$work/llvm-pie.elf" \
-	"$work/obj/app_crt.o" \
-	--start-group "${psp5_libs[@]}" "${extra_libs[@]}" ${ffmpeg_libs[@]+"${ffmpeg_libs[@]}"} --end-group \
-	"$work/stubs/libSceAgc.so" "$work/stubs/libSceAgcDriver.so" \
-	"${radv_link_inputs[@]}" \
-	--as-needed "$sdk"/target/lib/*.so
+link_title
+
+comm -23 \
+	<("$sdk/bin/llvm-nm" -D "$work/llvm-pie.elf" | awk '$1 == "w" { print $2 }' | sort -u) \
+	<(stub_exports) | sed 's/^/--defsym=/; s/$/=0/' > "$work/weak-to-zero.rsp"
+if [[ -s $work/weak-to-zero.rsp ]]; then
+	# A response file rather than arguments: there are thousands of them.
+	printf "==> binding %s undefined weak symbols to zero, then linking again\n" \
+		"$(wc -l < "$work/weak-to-zero.rsp")"
+	link_title "@$work/weak-to-zero.rsp"
+fi
 
 # A title loads neither libkernel_sys's exports nor libScePosixForWebKit's: an
 # import only their stubs define links, but is null at run time, so its first call

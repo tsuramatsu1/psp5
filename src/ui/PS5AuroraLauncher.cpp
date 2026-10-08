@@ -27,6 +27,8 @@
 #include "core/settings.hpp"
 #include "ui/feedback.hpp"
 #include "demo/catalog.hpp"
+
+#include "PS5GameLibrary.h"
 #include "gfx/font.hpp"
 #include "gfx/vk/vk_renderer.hpp"
 #include "ui/fonts.hpp"
@@ -44,9 +46,6 @@ namespace {
 
 // The kit's fonts, staged beside the title's other assets by tools/link-title.sh.
 const char *const kFontDir = "/app0/ui/fonts";
-
-// Leaving: OPTIONS held, as every kit program does it.
-constexpr double kHoldToLeaveSeconds = 1.0;
 
 bool ReadWholeFile(const std::string &path, std::string *out) {
 	FILE *fh = fopen(path.c_str(), "rb");
@@ -397,13 +396,18 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 
 	psp5::Trace("ui: fonts loaded");
 
-	hui::demo::Catalog catalog;
-	catalog.build_covers(renderer, fonts);
-	psp5::Trace("ui: covers built (%d items)", (int)catalog.size());
+	// The games on the memory stick, with a cover rendered for each.
+	Library().Build(renderer, fonts);
+	psp5::Trace("ui: covers built (%u game(s))", (unsigned)Library().size());
 
 	hui::Settings settings;
 	hui::app::Telemetry telemetry;
-	hui::app::Context context{fonts, catalog, telemetry, settings};
+	// app::Context holds a demo::Catalog by reference, so one has to exist. Its
+	// covers are never built and nothing reads its items: psp5's home screen is
+	// src/ui/kit/aurora.cpp, which reads Library() instead. Left empty rather
+	// than removed because that would mean forking app::Context as well.
+	hui::demo::Catalog unused_catalog;
+	hui::app::Context context{fonts, unused_catalog, telemetry, settings};
 	std::unique_ptr<hui::app::Concept> aurora = hui::concepts::make_aurora(context);
 	aurora->enter();
 	psp5::Trace("ui: aurora created");
@@ -413,7 +417,6 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	hui::InputTracker tracker;
 	hui::PadSample samples[64];
 	double previous = now_seconds();
-	double holding = 0.0;
 	uint32_t slot = 0;
 	uint64_t frames = 0;
 
@@ -433,9 +436,13 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 		    tracker.update(std::span<const hui::PadSample>(samples, (size_t)count),
 		                   (uint64_t)(now * 1e6));
 
-		// Leaving, the way every kit program does it: OPTIONS held.
-		holding = (state.held & PAD_OPTIONS) ? holding + dt : 0.0;
-		if (holding >= kHoldToLeaveSeconds) {
+		// Leaving: chosen from the settings panel, which is where OPTIONS goes.
+		if (QuitRequested()) {
+			break;
+		}
+		// ... or because a game was chosen, which main() boots once the device
+		// is back in PPSSPP's hands.
+		if (!PendingLaunch().empty()) {
 			break;
 		}
 
@@ -485,10 +492,65 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 	}
 
 	psp5::Trace("ui: leaving the home screen");
+	Library().Release(renderer);
 	aurora.reset();
 	renderer.release();
 	surface.End();
 	return true;
 }
 
+namespace {
+
+std::string g_pending_launch;
+std::string g_pending_disc_id;
+bool g_game_ended = false;
+bool g_quit_requested = false;
+
+}  // namespace
+
+void RequestLaunch(const std::string &path, const std::string &discId) {
+	g_pending_launch = path;
+	g_pending_disc_id = discId;
+	psp5::Trace("ui: chosen %s (%s)", path.c_str(),
+	            discId.empty() ? "no disc id" : discId.c_str());
+}
+
+const std::string &PendingLaunch() {
+	return g_pending_launch;
+}
+
+const std::string &PendingLaunchDiscId() {
+	return g_pending_disc_id;
+}
+
+void RequestQuit() {
+	g_quit_requested = true;
+	psp5::Trace("ui: closing the title");
+}
+
+bool QuitRequested() {
+	return g_quit_requested;
+}
+
+void ClearPendingLaunch() {
+	g_pending_launch.clear();
+	g_pending_disc_id.clear();
+}
+
+bool GameEnded() {
+	return g_game_ended;
+}
+
+void ClearGameEnded() {
+	g_game_ended = false;
+}
+
 }  // namespace psp5
+
+extern "C" void PS5_NotifyGameEnded() {
+	// Also reached once at start-up, when NativeInit builds its initial screen
+	// before any game has run. Harmless: main() clears the flag on its way into
+	// each turn of the frame loop.
+	psp5::Trace("the game ended - back to the shelf");
+	psp5::g_game_ended = true;
+}

@@ -5,8 +5,15 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace psp5 {
+
+// Closing the title. OPTIONS opens the home screen's settings, so there is no
+// gesture left to hold for this - it is a row at the foot of that panel, which
+// is also where someone would look for it.
+void RequestQuit();
+bool QuitRequested();
 
 // The device the title already created, as plain handles.
 //
@@ -39,5 +46,39 @@ struct AuroraDevice {
 // Returns false if it could not start (no fonts, no render pass), in which case
 // the title should go on to PPSSPP's own interface rather than show nothing.
 bool RunAuroraLauncher(const AuroraDevice &gpu);
+
+// The game the player chose, or empty if they left the home screen without
+// choosing one. The home screen calls the first; main() reads the second once
+// RunAuroraLauncher has returned, and boots what it names.
+//
+// A value rather than a callback because the two sides never run at once: the
+// launcher owns the device while it is up, PPSSPP owns it afterwards, and the
+// only thing that has to cross between them is a path.
+void RequestLaunch(const std::string &path, const std::string &discId);
+const std::string &PendingLaunch();
+// The chosen game's PARAM.SFO DISC_ID, which names its cheat file. Empty when
+// the game carries none, in which case it has no cheats to show either.
+const std::string &PendingLaunchDiscId();
+void ClearPendingLaunch();
+
+}  // namespace psp5
+
+// Called by PPSSPP, from the one constructor of the game browser it would
+// otherwise have shown. psp5 has its own home screen, so this is simply the
+// signal that the game has ended; main() leaves the frame loop before PPSSPP
+// draws that screen, and the shelf comes back instead.
+//
+// extern "C", because the call sites are inside PPSSPP's own translation units.
+extern "C" void PS5_NotifyGameEnded();
+
+// Defined by PPSSPP (see patches/ppsspp/ps5-standalone.patch): hands it the game
+// to run, as an EmuScreen, without any of its own screens being drawn first.
+extern "C" void PS5_BootGame(const char *path);
+
+namespace psp5 {
+
+// Whether PPSSPP has left the game since the flag was last cleared.
+bool GameEnded();
+void ClearGameEnded();
 
 }  // namespace psp5

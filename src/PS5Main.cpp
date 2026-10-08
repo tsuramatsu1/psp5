@@ -24,6 +24,7 @@
 #include "Common/Input/KeyCodes.h"
 #include "Common/Log.h"
 #include "Common/Log/LogManager.h"
+#include "Common/System/Display.h"
 #include "Common/System/NativeApp.h"
 #include "Common/System/System.h"
 #include "Common/TimeUtil.h"
@@ -32,6 +33,7 @@
 #include "Core/System.h"
 
 #include "PS5Audio.h"
+#include "PS5Overlay.h"
 #include "PS5Log.h"
 #include "PS5Paths.h"
 #include "PS5VulkanContext.h"
@@ -126,22 +128,100 @@ void SendButtonEdges(int player, uint32_t held, uint32_t previous) {
 
 void SendAxes(int player, const pad &state) {
 	const InputDeviceID device = (InputDeviceID)(DEVICE_ID_PAD_0 + player);
-	// PPSSPP's sticks are y-up; the platform layer reports y-down, as the console
-	// does, so Y is negated here rather than in the vendored platform layer.
+	// Y goes through unnegated, down-positive, as the console reports it.
+	//
+	// PPSSPP has both conventions and picks one per controller. defaultPadMap -
+	// the map psp5 uses, and the one its button codes come from - binds Y the
+	// opposite way round to X:
+	//
+	//     {VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},   // +1 is right
+	//     {VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},   // +1 is down
+	//
+	// so it wants y-down, like SDL. defaultXInputKeyMap is the y-up one. Negating
+	// here, as psp5 did at first, left every analog game inverted.
 	const AxisInput axes[] = {
 	    {device, JOYSTICK_AXIS_X, state.left_x},
-	    {device, JOYSTICK_AXIS_Y, -state.left_y},
+	    {device, JOYSTICK_AXIS_Y, state.left_y},
 	    {device, JOYSTICK_AXIS_Z, state.right_x},
-	    {device, JOYSTICK_AXIS_RZ, -state.right_y},
+	    {device, JOYSTICK_AXIS_RZ, state.right_y},
 	    {device, JOYSTICK_AXIS_LTRIGGER, state.l2},
 	    {device, JOYSTICK_AXIS_RTRIGGER, state.r2},
 	};
 	NativeAxis(axes, ARRAY_SIZE(axes));
 }
 
+// How wide PPSSPP's interface is laid out, in its own units. See
+// System_GetPropertyFloat.
+constexpr int kTelevisionDp = 1280;
+
+// L1 + L3, and the panel's own buttons while it is up. Returns true when the
+// panel has the pad, in which case the game is shown nothing this frame.
+//
+// Edge-triggered off `pressed` rather than `held`, so a button that is still
+// down next frame does not repeat. There is no key repeat here: a cheat list is
+// short, and a list that scrolled under a resting thumb would be worse than one
+// that needs a press per row.
+bool PollCheatOverlay(const pad &state) {
+	constexpr uint32_t kOpenCombo = PAD_L1 | PAD_L3;
+	// The combo is a press of either button while the other is already down, so
+	// it fires whichever order they arrive in.
+	if ((state.pressed & kOpenCombo) && (state.held & kOpenCombo) == kOpenCombo) {
+		psp5::ToggleCheatOverlay();
+		return true;
+	}
+	if (!psp5::CheatOverlayOpen()) {
+		return false;
+	}
+
+	if (state.pressed & PAD_UP) {
+		psp5::CheatOverlayMove(-1);
+	}
+	if (state.pressed & PAD_DOWN) {
+		psp5::CheatOverlayMove(1);
+	}
+	if (state.pressed & PAD_LEFT) {
+		psp5::CheatOverlayAdjust(-1);
+	}
+	if (state.pressed & PAD_RIGHT) {
+		psp5::CheatOverlayAdjust(1);
+	}
+	if (state.pressed & PAD_CROSS) {
+		psp5::CheatOverlaySelect();
+	}
+	if (state.pressed & PAD_CIRCLE) {
+		psp5::CheatOverlayBack();
+	}
+	return true;
+}
+
+// Kept between calls, because pad_poll derives `pressed` by comparing against
+// what the struct already holds:
+//
+//     const uint32_t before = pad->held;
+//     pad->held    = ...;
+//     pad->pressed = pad->held & ~before;
+//
+// A fresh pad each frame makes `before` zero, so every held button reads as
+// newly pressed - which turned L1 + L3 into a press on every frame it was held,
+// opening and closing the cheat panel too fast to see.
+pad g_pad{};
+
 void PollInput() {
-	pad state{};
+	pad &state = g_pad;
 	pad_poll(&state);
+
+	// While the panel is up the pad is its own. Whatever the game was holding is
+	// released first, or a direction held as the panel opened would stay down
+	// for as long as it is open.
+	if (PollCheatOverlay(state)) {
+		for (int player = 0; player < PAD_PLAYERS; player++) {
+			if (g_previousButtons[player]) {
+				SendButtonEdges(player, 0, g_previousButtons[player]);
+				g_previousButtons[player] = 0;
+			}
+		}
+		return;
+	}
 
 	const uint32_t players = pad_players();
 	for (int player = 0; player < PAD_PLAYERS; player++) {
@@ -252,6 +332,19 @@ float System_GetPropertyFloat(SystemProperty prop) {
 	switch (prop) {
 	case SYSPROP_DISPLAY_REFRESH_RATE:
 		return 60.0f;
+	case SYSPROP_DISPLAY_DPI: {
+		// PPSSPP lays its interface out in dp, where dp = pixels * 96 / dpi, and
+		// a title has no DPI to report. Answering -1 leaves PPSSPP assuming 96,
+		// which on a 4K television lays the interface out as if it were 3840 dp
+		// across - so every overlay it draws comes out about a third of the size
+		// it should be, which at sofa distance is unreadable.
+		//
+		// A television is further away than a monitor, so the honest answer is
+		// the DPI that lands the layout at a television's working width. 1280 dp
+		// is what PPSSPP's own living-room layouts use.
+		const int width = g_display.pixel_xres > 0 ? g_display.pixel_xres : kTelevisionDp;
+		return 96.0f * (float)width / (float)kTelevisionDp;
+	}
 	case SYSPROP_DISPLAY_SAFE_INSET_LEFT:
 	case SYSPROP_DISPLAY_SAFE_INSET_RIGHT:
 	case SYSPROP_DISPLAY_SAFE_INSET_TOP:
@@ -355,6 +448,16 @@ int main(int argc, char *argv[]) {
 	// showed psp5's own lines and nothing from the emulator, so a failure inside
 	// PPSSPP - "Failed to generate UI atlas!" among them - was invisible and had to
 	// be inferred from where it crashed. Noisy, and worth it during bring-up.
+	// The tree PPSSPP expects under the memory stick: PPSSPP_STATE, SAVEDATA,
+	// Cheats, SYSTEM and the rest. PS5Paths makes the few psp5 cannot start
+	// without, but only the front ends call this, and psp5 was not - so save
+	// states were written into a PPSSPP_STATE directory that did not exist, and
+	// failed. PPSSPP's own routine rather than a hand-written list, so it stays
+	// right if the set changes.
+	if (!CreateSysDirectories()) {
+		psp5::Trace("warning: could not create the PSP directories under %s", memstick.c_str());
+	}
+
 	g_logManager.SetAllLogLevels(LogLevel::LINFO);
 	g_logManager.SetAllLogEnable(true);
 	g_logManager.SetOutputsEnabled(LogOutput::Stdio);
@@ -369,52 +472,70 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	// The home screen, before PPSSPP's render manager exists: the kit and the
-	// render manager each assume they own the frame loop, so they take turns. The
-	// launcher gives the device back exactly as it found it; if it cannot start,
-	// the title simply goes on to PPSSPP's own interface.
-	{
-		VulkanContext *vk = g_graphics->vulkan();
-		psp5::AuroraDevice gpu;
-		gpu.instance = (std::uint64_t)vk->GetInstance();
-		gpu.physicalDevice = (std::uint64_t)vk->GetCurrentPhysicalDevice();
-		gpu.device = (std::uint64_t)vk->GetDevice();
-		gpu.queue = (std::uint64_t)vk->GetGraphicsQueue();
-		gpu.swapchain = (std::uint64_t)vk->GetSwapchain();
-		gpu.queueFamily = (std::uint32_t)vk->GetGraphicsQueueFamilyIndex();
-		gpu.swapchainFormat = (std::uint32_t)vk->GetSwapchainFormat();
-		gpu.width = vk->GetBackbufferWidth();
-		gpu.height = vk->GetBackbufferHeight();
-		psp5::RunAuroraLauncher(gpu);
-	}
-
-	if (!g_graphics->InitDraw(&error)) {
-		psp5::Trace("fatal: graphics: %s", error.c_str());
-		g_graphics->Shutdown();
-		delete g_graphics;
-		g_graphics = nullptr;
-		NativeShutdown();
-		return 1;
-	}
-
-	if (!NativeInitGraphics(g_graphics)) {
-		psp5::Trace("fatal: NativeInitGraphics failed");
-		g_graphics->Shutdown();
-		delete g_graphics;
-		g_graphics = nullptr;
-		NativeShutdown();
-		return 1;
-	}
-
-	psp5::Trace("running");
+	// The home screen and the emulator take turns with the device, for as long as
+	// the title is open: shelf, game, shelf. They cannot share it - the kit's
+	// renderer and PPSSPP's render manager each assume they own the frame loop -
+	// so each turn ends by giving the device back in the state the other expects.
+	//
+	// PPSSPP's own interface is never drawn. Its logo and game browser are
+	// skipped because psp5 hands it an EmuScreen directly, and the loop below
+	// leaves before the browser it switches back to is ever presented.
 	while (!g_quit) {
-		PollInput();
-		NativeFrame(g_graphics);
-		g_graphics->Poll();
+		psp5::ClearPendingLaunch();
+		{
+			VulkanContext *vk = g_graphics->vulkan();
+			psp5::AuroraDevice gpu;
+			gpu.instance = (std::uint64_t)vk->GetInstance();
+			gpu.physicalDevice = (std::uint64_t)vk->GetCurrentPhysicalDevice();
+			gpu.device = (std::uint64_t)vk->GetDevice();
+			gpu.queue = (std::uint64_t)vk->GetGraphicsQueue();
+			// Read afresh every time: ShutdownDraw rebuilds the swapchain, so the
+			// handle from the previous turn is stale.
+			gpu.swapchain = (std::uint64_t)vk->GetSwapchain();
+			gpu.queueFamily = (std::uint32_t)vk->GetGraphicsQueueFamilyIndex();
+			gpu.swapchainFormat = (std::uint32_t)vk->GetSwapchainFormat();
+			gpu.width = vk->GetBackbufferWidth();
+			gpu.height = vk->GetBackbufferHeight();
+			psp5::RunAuroraLauncher(gpu);
+		}
+
+		// Nothing chosen: the player left the shelf, which is how the title is
+		// closed.
+		const std::string game = psp5::PendingLaunch();
+		if (game.empty()) {
+			psp5::Trace("no game chosen - closing");
+			break;
+		}
+
+		if (!g_graphics->InitDraw(&error)) {
+			psp5::Trace("fatal: graphics: %s", error.c_str());
+			break;
+		}
+		if (!NativeInitGraphics(g_graphics)) {
+			psp5::Trace("fatal: NativeInitGraphics failed");
+			g_graphics->ShutdownDraw();
+			break;
+		}
+
+		psp5::Trace("booting %s", game.c_str());
+		psp5::SetCheatOverlayGame(psp5::PendingLaunchDiscId());
+		psp5::ClearGameEnded();
+		PS5_BootGame(game.c_str());
+
+		// PS5_NotifyGameEnded fires from the constructor of the browser PPSSPP
+		// switches to when a game stops. That switch only takes effect in the
+		// next frame's update(), so breaking here means it is never drawn.
+		while (!g_quit && !psp5::GameEnded()) {
+			PollInput();
+			NativeFrame(g_graphics);
+			g_graphics->Poll();
+		}
+
+		NativeShutdownGraphics();
+		g_graphics->ShutdownDraw();
 	}
 
 	say("shutting down");
-	NativeShutdownGraphics();
 	g_graphics->Shutdown();
 	delete g_graphics;
 	g_graphics = nullptr;
