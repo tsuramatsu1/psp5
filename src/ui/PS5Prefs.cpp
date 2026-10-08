@@ -17,6 +17,7 @@ namespace prefs {
 namespace {
 
 SoundSet g_soundSet = SoundSet::glass;
+bool g_achievements = false;
 bool g_loaded = false;
 
 std::string Path() {
@@ -30,6 +31,7 @@ void Save() {
 		return;
 	}
 	fprintf(fh, "soundset=%d\n", (int)g_soundSet);
+	fprintf(fh, "achievements=%d\n", g_achievements ? 1 : 0);
 	fclose(fh);
 	chmod(Path().c_str(), 0666);
 }
@@ -46,6 +48,19 @@ const char *soundSetName(SoundSet set) {
 
 SoundSet soundSet() {
 	return g_soundSet;
+}
+
+bool achievements() {
+	return g_achievements;
+}
+
+void setAchievements(bool on) {
+	if (on == g_achievements) {
+		return;
+	}
+	g_achievements = on;
+	Save();
+	psp5::Trace("prefs: achievements %s", on ? "on" : "off");
 }
 
 void setSoundSet(SoundSet set) {
@@ -71,6 +86,9 @@ void Load() {
 		int value = 0;
 		if (sscanf(line, "soundset=%d", &value) == 1 && value >= 0 && value <= 2) {
 			g_soundSet = (SoundSet)value;
+		}
+		if (sscanf(line, "achievements=%d", &value) == 1) {
+			g_achievements = value != 0;
 		}
 	}
 	fclose(fh);

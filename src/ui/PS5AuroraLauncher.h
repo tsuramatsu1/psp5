@@ -54,7 +54,9 @@ bool RunAuroraLauncher(const AuroraDevice &gpu);
 // A value rather than a callback because the two sides never run at once: the
 // launcher owns the device while it is up, PPSSPP owns it afterwards, and the
 // only thing that has to cross between them is a path.
-void RequestLaunch(const std::string &path, const std::string &discId);
+void RequestLaunch(const std::string &path, const std::string &discId, bool resume = false);
+// Whether the chosen game should pick up where it was left.
+bool PendingLaunchResumes();
 const std::string &PendingLaunch();
 // The chosen game's PARAM.SFO DISC_ID, which names its cheat file. Empty when
 // the game carries none, in which case it has no cheats to show either.

@@ -48,6 +48,15 @@ struct Row {
 
 std::vector<Row> g_rows;
 std::string g_summary;
+std::string g_game;
+uint32_t g_earned = 0;
+uint32_t g_total = 0;
+uint32_t g_points = 0;
+uint32_t g_pointsTotal = 0;
+
+rc_client_t *client_for_summary() {
+	return Achievements::GetClient();
+}
 
 // Unofficial achievements are off by default and are a setting of PPSSPP's, so
 // the bar shows whatever the player has asked PPSSPP for.
@@ -59,6 +68,8 @@ uint32_t ListFilter() {
 void Rebuild() {
 	g_rows.clear();
 	g_summary.clear();
+	g_game.clear();
+	g_earned = g_total = g_points = g_pointsTotal = 0;
 
 	// Four different situations used to share one message, which said the game
 	// was unsupported even when the truth was that nobody had signed in yet or
@@ -86,6 +97,17 @@ void Rebuild() {
 	}
 
 	g_summary = Achievements::GetGameAchievementSummary(0);
+
+	// The counts behind the header's bar. rcheevos keeps them, so they do not
+	// have to be totted up from the list.
+	rc_client_user_game_summary_t summary {};
+	rc_client_get_user_game_summary(client_for_summary(), &summary);
+	g_earned = summary.num_unlocked_achievements;
+	g_total = summary.num_core_achievements;
+	g_points = summary.points_unlocked;
+	g_pointsTotal = summary.points_core;
+	const rc_client_game_t *game = rc_client_get_game_info(client_for_summary());
+	g_game = game && game->title ? game->title : "";
 
 	rc_client_t *client = Achievements::GetClient();
 	rc_client_achievement_list_t *list = rc_client_create_achievement_list(
@@ -201,82 +223,121 @@ extern "C" void PS5_DrawAchievementsBar(UIContext *ui) {
 		return;
 	}
 
+	// Laid out the way the console lists trophies: a head that says how far
+	// along the game is, then a row per achievement with its mark on the left,
+	// its name and what it asks for, and its points on the right. The marks are
+	// drawn rather than downloaded - rcheevos gives a badge URL, and fetching
+	// one image per achievement to show a list is a lot of network for a panel.
 	const Bounds screen = ui->GetBounds();
-	const float width = std::min(470.0f, screen.w * 0.44f);
+	const float width = std::min(520.0f, screen.w * 0.46f);
 	const float x = screen.w - width;
-	const float pad = 28.0f;
+	const float pad = 30.0f;
 	const float inner = width - pad * 2.0f;
-	const float rowGap = 6.0f;
 
 	ui->FillRect(UI::Drawable(psp5::kShade), Bounds(0.0f, 0.0f, x, screen.h));
 	ui->FillRect(UI::Drawable(psp5::kPage), Bounds(x, 0.0f, width, screen.h));
 	ui->FillRect(UI::Drawable(psp5::kOutline), Bounds(x, 0.0f, 1.0f, screen.h));
 
 	ui->SetFontStyle(ui->GetTheme().uiFont);
-	ui->SetFontScale(1.0f, 1.0f);
-	ui->DrawText("ACHIEVEMENTS", x + pad, pad + 2.0f, psp5::kInk, ALIGN_LEFT | ALIGN_TOP);
-	ui->SetFontScale(0.6f, 0.6f);
-	ui->DrawText(psp5::g_summary.empty() ? "R1 + R3  CLOSE" : psp5::g_summary.c_str(), x + pad,
-	             pad + 36.0f, psp5::kInkFaint, ALIGN_LEFT | ALIGN_TOP);
-	ui->FillRect(UI::Drawable(psp5::kOutline), Bounds(x + pad, pad + 60.0f, inner, 1.0f));
 
-	const float top = pad + 80.0f;
-	const int rows = (int)psp5::g_rows.size();
+	// ---- the head ----
+	float y = pad;
+	ui->SetFontScale(0.58f, 0.58f);
+	ui->DrawText("ACHIEVEMENTS", x + pad, y, psp5::kInkDim, ALIGN_LEFT | ALIGN_TOP);
+	y += 26.0f;
+	if (!psp5::g_game.empty()) {
+		ui->SetFontScale(0.95f, 0.95f);
+		ui->DrawTextRect(psp5::g_game, Bounds(x + pad, y, inner, 34.0f), psp5::kInk,
+		                 ALIGN_LEFT | ALIGN_TOP);
+		y += 38.0f;
+	}
 
-	// Headers are short; the rest are cards tall enough for a line of
-	// description under the title.
-	const float cardHeight = 74.0f;
+	if (psp5::g_total > 0) {
+		char text[96];
+		std::snprintf(text, sizeof(text), "%u of %u", psp5::g_earned, psp5::g_total);
+		ui->SetFontScale(0.72f, 0.72f);
+		ui->DrawText(text, x + pad, y + 2.0f, psp5::kInk, ALIGN_LEFT | ALIGN_TOP);
+		std::snprintf(text, sizeof(text), "%u / %u points", psp5::g_points, psp5::g_pointsTotal);
+		ui->SetFontScale(0.6f, 0.6f);
+		ui->DrawTextRect(text, Bounds(x + width - pad - 200.0f, y + 4.0f, 200.0f, 22.0f),
+		                 psp5::kInkDim, ALIGN_RIGHT | ALIGN_TOP);
+		y += 30.0f;
+		psp5::DrawMeter(ui, Bounds(x + pad, y, inner, 6.0f),
+		                (float)psp5::g_earned / (float)psp5::g_total, psp5::kPrimary);
+		y += 20.0f;
+	}
+	ui->FillRect(UI::Drawable(psp5::kOutline), Bounds(x + pad, y, inner, 1.0f));
+	y += 14.0f;
+
+	// ---- the list ----
+	const float top = y;
+	const float rowHeight = 86.0f;
 	const float headerHeight = 34.0f;
-	const int visible = std::max(1, (int)((screen.h - top - pad) / (cardHeight + rowGap)));
+	const int rows = (int)psp5::g_rows.size();
+	const int visible = std::max(1, (int)((screen.h - top - pad) / rowHeight));
 	int first = std::clamp(psp5::g_row - visible / 2, 0, std::max(0, rows - visible));
-	const int last = std::min(rows, first + visible);
 
-	float y = top;
-	for (int i = first; i < last && y < screen.h - pad; ++i) {
+	for (int i = first; i < rows && y < screen.h - pad; ++i) {
 		const psp5::Row &row = psp5::g_rows[(std::size_t)i];
 		const bool focused = i == psp5::g_row;
 
 		if (row.header) {
-			ui->SetFontScale(0.6f, 0.6f);
-			ui->DrawTextRect(row.label, Bounds(x + pad + 2.0f, y, inner - 60.0f, headerHeight),
+			ui->SetFontScale(0.56f, 0.56f);
+			ui->DrawTextRect(row.label, Bounds(x + pad, y, inner - 60.0f, headerHeight),
 			                 psp5::kInkDim, ALIGN_LEFT | ALIGN_VCENTER);
 			if (!row.value.empty()) {
-				ui->DrawTextRect(row.value,
-				                 Bounds(x + width - pad - 56.0f, y, 56.0f, headerHeight),
+				ui->DrawTextRect(row.value, Bounds(x + width - pad - 56.0f, y, 56.0f,
+				                                   headerHeight),
 				                 psp5::kInkFaint, ALIGN_RIGHT | ALIGN_VCENTER);
 			}
 			y += headerHeight;
 			continue;
 		}
 
-		const Bounds card(x + pad, y, inner, cardHeight);
-		psp5::FillRoundOutlined(ui, card, psp5::kRadius,
-		                        focused ? psp5::kSurfaceHigh : psp5::kSurface,
-		                        focused ? psp5::kAccent : psp5::kOutline, focused ? 2.0f : 1.0f);
+		if (focused) {
+			ui->FillRect(UI::Drawable(0x18FFFFFF), Bounds(x + 1.0f, y, width - 1.0f, rowHeight));
+			ui->FillRect(UI::Drawable(psp5::kAccent), Bounds(x, y, 3.0f, rowHeight));
+		}
 
-		// Unlocked reads at a glance from the green: this theme's colour for a
-		// thing that is done.
+		// The mark: filled when earned, an empty ring when not, as a trophy
+		// list shows one earned and one still to get.
+		const float mark = 54.0f;
+		const Bounds badge(x + pad, y + (rowHeight - mark) * 0.5f, mark, mark);
+		if (row.unlocked) {
+			psp5::FillRound(ui, badge, 12.0f, psp5::kPrimary);
+			// A tick, as two strokes.
+			ui->FillRect(UI::Drawable(psp5::kPage),
+			             Bounds(badge.x + 16.0f, badge.y + 27.0f, 10.0f, 4.0f));
+			ui->FillRect(UI::Drawable(psp5::kPage),
+			             Bounds(badge.x + 24.0f, badge.y + 19.0f, 4.0f, 14.0f));
+		} else {
+			psp5::FillRoundOutlined(ui, badge, 12.0f, psp5::kPage, psp5::kOutline, 2.0f);
+		}
+
+		const float textX = badge.x + mark + 16.0f;
+		float textW = width - (textX - x) - pad - 54.0f;
+
 		ui->SetFontScale(0.74f, 0.74f);
-		ui->DrawTextRect(row.label, Bounds(card.x + 16.0f, card.y + 8.0f, card.w - 76.0f, 24.0f),
-		                 row.unlocked ? psp5::kPrimary : psp5::kInk, ALIGN_LEFT | ALIGN_TOP);
+		ui->DrawTextRect(row.label, Bounds(textX, y + 16.0f, textW, 24.0f),
+		                 row.unlocked ? psp5::kInk : psp5::kInkDim, ALIGN_LEFT | ALIGN_TOP);
 		if (!row.value.empty()) {
 			ui->SetFontScale(0.62f, 0.62f);
-			ui->DrawTextRect(row.value, Bounds(card.x + card.w - 58.0f, card.y + 10.0f, 44.0f,
-			                                   22.0f),
-			                 psp5::kInkDim, ALIGN_RIGHT | ALIGN_TOP);
+			ui->DrawTextRect(row.value, Bounds(x + width - pad - 50.0f, y + 18.0f, 50.0f, 22.0f),
+			                 psp5::kInkFaint, ALIGN_RIGHT | ALIGN_TOP);
 		}
 		if (!row.detail.empty()) {
 			ui->SetFontScale(0.6f, 0.6f);
-			ui->DrawTextRect(row.detail, Bounds(card.x + 16.0f, card.y + 34.0f, card.w - 32.0f,
-			                                    20.0f),
+			ui->DrawTextRect(row.detail, Bounds(textX, y + 42.0f, textW + 40.0f, 20.0f),
 			                 psp5::kInkFaint, ALIGN_LEFT | ALIGN_TOP);
 		}
 		if (row.progress > 0.0f && !row.unlocked) {
-			psp5::DrawMeter(ui, Bounds(card.x + 16.0f, card.y + cardHeight - 14.0f,
-			                           card.w - 32.0f, 5.0f),
-			                row.progress, psp5::kAccent);
+			psp5::DrawMeter(ui, Bounds(textX, y + rowHeight - 20.0f, textW, 4.0f), row.progress,
+			                psp5::kAccent);
 		}
-		y += cardHeight + rowGap;
+
+		ui->FillRect(UI::Drawable(psp5::kOutline),
+		             Bounds(x + pad, y + rowHeight - 1.0f, inner, 1.0f));
+		y += rowHeight;
 	}
 
 	ui->SetFontScale(1.0f, 1.0f);

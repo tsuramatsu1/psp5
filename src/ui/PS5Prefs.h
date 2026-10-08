@@ -28,6 +28,17 @@ SoundSet soundSet();
 void setSoundSet(SoundSet set);
 const char *soundSetName(SoundSet set);
 
+// Whether the player has signed in to RetroAchievements and wants it on.
+//
+// Kept here rather than read back from PPSSPP's bAchievementsEnable, which is
+// one of its per-game settings: a game config written before the player signed
+// in carries that setting as false, and loading it at boot would switch
+// achievements off for that game for ever. psp5 offers achievements in the
+// title's settings, because an account belongs to the player and not to a game,
+// so this is where the answer lives.
+bool achievements();
+void setAchievements(bool on);
+
 // Reads config/psp5.txt. Called once, before the home screen is built.
 void Load();
 

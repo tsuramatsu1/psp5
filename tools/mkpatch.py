@@ -725,6 +725,49 @@ assert t.count(old) == 1, "kirk AES anchor"
 t = t.replace(old, new, 1)
 write(p, t)
 
+# PPSSPP marks AchievementsEnable as a per-game setting, and psp5 writes a
+# per-game config whenever a cheat is switched for a game. A config written
+# before the player signed in carries the setting as false, and loading it at
+# boot switched achievements off for that game for ever - which showed up as
+# "no achievements for this game" on games RetroAchievements plainly supports.
+#
+# psp5 offers achievements in the title's settings, because an account belongs
+# to the player and not to a game, so the player's answer wins here.
+p = D / 'UI/EmuScreen.cpp'
+t = p.read_text()
+old = """// Copyright (c) 2012- PPSSPP Project.
+"""
+new = """// Copyright (c) 2012- PPSSPP Project.
+
+// psp5: declared here rather than beside the drawing hooks further down, which
+// come long after the boot code that asks it.
+extern "C" bool PS5_AchievementsEnabled();
+"""
+assert t.count(old) == 1, "emuscreen top anchor"
+t = t.replace(old, new, 1)
+
+old = """	// Initialize retroachievements, now that we're on the right thread.
+	if (g_Config.bAchievementsEnable) {"""
+new = """	// Initialize retroachievements, now that we're on the right thread.
+#if PPSSPP_PLATFORM(PS5)
+	g_Config.bAchievementsEnable = PS5_AchievementsEnabled();
+#endif
+	if (g_Config.bAchievementsEnable) {"""
+assert t.count(old) == 1, "achievements boot anchor"
+t = t.replace(old, new, 1)
+
+old = """#if PPSSPP_PLATFORM(PS5)
+extern "C" void PS5_DrawOverlays(UIContext *ui);
+extern "C" bool PS5_WantsOverlay();
+#endif"""
+new = """#if PPSSPP_PLATFORM(PS5)
+extern "C" void PS5_DrawOverlays(UIContext *ui);
+extern "C" bool PS5_WantsOverlay();
+#endif"""
+assert t.count(old) == 1, "achievements declaration anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
 print("edits applied")
 
 

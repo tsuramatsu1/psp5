@@ -594,14 +594,16 @@ namespace {
 
 std::string g_pending_launch;
 std::string g_pending_disc_id;
+bool g_pending_resume = false;
 bool g_game_ended = false;
 bool g_quit_requested = false;
 
 }  // namespace
 
-void RequestLaunch(const std::string &path, const std::string &discId) {
+void RequestLaunch(const std::string &path, const std::string &discId, bool resume) {
 	g_pending_launch = path;
 	g_pending_disc_id = discId;
+	g_pending_resume = resume;
 	psp5::Trace("ui: chosen %s (%s)", path.c_str(),
 	            discId.empty() ? "no disc id" : discId.c_str());
 }
@@ -612,6 +614,10 @@ const std::string &PendingLaunch() {
 
 const std::string &PendingLaunchDiscId() {
 	return g_pending_disc_id;
+}
+
+bool PendingLaunchResumes() {
+	return g_pending_resume;
 }
 
 void RequestQuit() {
@@ -626,6 +632,7 @@ bool QuitRequested() {
 void ClearPendingLaunch() {
 	g_pending_launch.clear();
 	g_pending_disc_id.clear();
+	g_pending_resume = false;
 }
 
 bool GameEnded() {

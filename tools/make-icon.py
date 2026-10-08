@@ -8,7 +8,11 @@ PS5_VulkanTemplate's own icon0.png uses, and what this writes.
 
 The drawing is a generic handheld: a wide body, a screen, a d-pad and four face
 buttons. It is deliberately not anyone's logo or product shape, and carries no
-PlayStation or Sony mark; the only wording is the project's own name.
+PlayStation or Sony mark; the only wording is the project's own name, PSP5.
+
+The PSP and PS5 wordmarks are set in Sony's own typefaces, which are not here and
+are not psp5's to ship. --psp-font and --five-font take a path each if you have
+them; without them both halves are set in the system's bold sans.
 
 Everything is drawn at 4x and downsampled, which is what gives the curves and the
 small shapes clean edges - PIL has no antialiased drawing of its own.
@@ -69,7 +73,13 @@ def radial_glow(size, colour, radius):
     return layer, mask
 
 
-def load_font(points):
+def load_font(points, path=None):
+    """The font to set the wordmark in; `path` wins when it is given."""
+    if path:
+        try:
+            return ImageFont.truetype(path, points)
+        except OSError:
+            print("warning: cannot read %s, falling back" % path, file=sys.stderr)
     """A bold face for the wordmark, from whichever platform is running this."""
     candidates = [
         "C:/Windows/Fonts/segoeuib.ttf",
@@ -86,7 +96,7 @@ def load_font(points):
     return ImageFont.load_default()
 
 
-def draw_icon():
+def draw_icon(psp_font_path=None, five_font_path=None):
     image = vertical_gradient(S, BACKDROP_TOP, BACKDROP_BOTTOM)
     glow, mask = radial_glow(S, GLOW, 0.92)
     image = Image.composite(glow, image, mask)
@@ -157,12 +167,56 @@ def draw_icon():
         draw.ellipse((btn_cx + dx - r, centre_y + dy - r,
                       btn_cx + dx + r, centre_y + dy + r), fill=CONTROL)
 
-    # The wordmark.
-    font = load_font(int(S * 0.125))
-    text = "psp5"
-    box = draw.textbbox((0, 0), text, font=font)
-    draw.text((centre_x - (box[2] - box[0]) / 2 - box[0], S * 0.70 - box[1]),
-              text, font=font, fill=TEXT)
+    # The wordmark: PSP5, drawn rather than set.
+    #
+    # Its letters are single-weight strokes - two bracket shapes around a
+    # zigzag - which no ordinary typeface has, so setting them in one looked
+    # nothing like it. The 5 is built the same way, out of the same strokes at
+    # the same weight, so it belongs to the other three rather than sitting
+    # beside them in someone else's face. Drawing them also keeps the icon free
+    # of anyone's font file.
+    letter_h = S * 0.085
+    stroke = max(2.0, letter_h * 0.085)
+    letter_w = letter_h * 1.70
+    gap = letter_w * 0.26
+    top = S * 0.695
+    bottom = top + letter_h
+
+    def bar(x0, y0, x1, y1):
+        draw.rectangle((x0, y0, x1, y1), fill=TEXT)
+
+    def letter_p(x0):
+        """Top bar, a short stem down its right, the bar back, then a long left stem."""
+        waist = top + letter_h * 0.45
+        bar(x0, top, x0 + letter_w, top + stroke)
+        bar(x0 + letter_w - stroke, top, x0 + letter_w, waist)
+        bar(x0, waist - stroke, x0 + letter_w, waist)
+        bar(x0, waist - stroke, x0 + stroke, bottom)
+
+    def letter_s(x0):
+        """A full-height stem down the middle, a bar right at the top and left at
+        the foot - the zigzag between the two Ps."""
+        cx = x0 + letter_w * 0.5
+        bar(cx - stroke * 0.5, top, cx + stroke * 0.5, bottom)
+        bar(cx - stroke * 0.5, top, x0 + letter_w, top + stroke)
+        bar(x0, bottom - stroke, cx + stroke * 0.5, bottom)
+
+    def digit_five(x0):
+        """The same strokes as the letters: top bar, down the left, across, down
+        the right, and along the foot."""
+        waist = top + letter_h * 0.5
+        bar(x0, top, x0 + letter_w, top + stroke)
+        bar(x0, top, x0 + stroke, waist)
+        bar(x0, waist - stroke, x0 + letter_w, waist)
+        bar(x0 + letter_w - stroke, waist - stroke, x0 + letter_w, bottom)
+        bar(x0, bottom - stroke, x0 + letter_w, bottom)
+
+    glyphs = (letter_p, letter_s, letter_p, digit_five)
+    total = letter_w * len(glyphs) + gap * (len(glyphs) - 1)
+    x = centre_x - total / 2
+    for glyph in glyphs:
+        glyph(x)
+        x += letter_w + gap
 
     # Down to the console's size in one step, which is where the edges get clean.
     return image.resize((SIZE, SIZE), Image.LANCZOS)
@@ -171,9 +225,13 @@ def draw_icon():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="sce_sys/icon0.png", type=pathlib.Path)
+    parser.add_argument("--psp-font", default=None,
+                        help="a .ttf for the PSP half of the wordmark")
+    parser.add_argument("--five-font", default=None,
+                        help="a .ttf for the 5")
     args = parser.parse_args()
 
-    icon = draw_icon().convert("RGB")  # No alpha: the console wants colour type 2.
+    icon = draw_icon(args.psp_font, args.five_font).convert("RGB")  # No alpha: the console wants colour type 2.
     args.out.parent.mkdir(parents=True, exist_ok=True)
     icon.save(args.out, "PNG", optimize=True)
     print(f"wrote {args.out}: {icon.width}x{icon.height}, {args.out.stat().st_size} bytes")

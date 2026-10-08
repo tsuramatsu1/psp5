@@ -72,7 +72,10 @@ const std::string kOverridesLabel = "Settings for this game";
 const std::string kAchievementsLabel = "RetroAchievements";
 constexpr float kShelfY = 730.0f;     // top of the focused shelf's cards
 constexpr float kShelfPitch = 304.0f; // distance between shelves
-constexpr int kActions = 3;
+// Play, Resume, Cheats, Close. Resume is always on the list rather than
+// appearing only when there is a state to load: a row that comes and goes
+// moves the others under the player's thumb.
+constexpr int kActions = 4;
 
 constexpr const char *kTechniques[] = {
     "Backdrop colours eased toward the focused cover's palette (ui::SpringColor)",
@@ -927,6 +930,22 @@ class Aurora final : public app::Concept
             }
             else if (action_ == 1)
             {
+                if (!psp5::HasSaveState(entry(focused_item()).disc_id))
+                {
+                    feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
+                    return;
+                }
+                // The same boot, with PPSSPP told to load the newest state as
+                // it starts: it has that already, for its own auto-load
+                // setting, so psp5 does not have to time a load itself.
+                feedback.play(audio::Cue::launch);
+                feedback.rumble(0.7f, 0.18f);
+                sheet_open_ = false;
+                psp5::RequestLaunch(entry(focused_item()).path,
+                                    entry(focused_item()).disc_id, true);
+            }
+            else if (action_ == 2)
+            {
                 // The cheat file is read now rather than when the shelf was
                 // built: it is one small file, and reading it on the way in
                 // means a file copied since the title started is still found.
@@ -1165,15 +1184,22 @@ class Aurora final : public app::Concept
         std::snprintf(text, sizeof(text), "%s  \xC2\xB7  %s  \xC2\xB7  Added %s",
                       file.format.c_str(), file.size_text.c_str(), file.date_text.c_str());
         ui::text(list, fonts.regular, text, x, 358, 26, kWhite.with_alpha(0.78f));
-        ui::paragraph(list, fonts.regular, it.blurb, x, 414, 26, 820, 36, kWhite.with_alpha(0.7f),
-                      2);
+        // The path was only ever useful for finding a file. How long it has been
+        // played is what a shelf is usually asked.
+        const std::string played = psp5::PlayedTime(file.disc_id);
+        ui::text(list, fonts.regular,
+                 played.empty() ? std::string("Not played yet") : "Played for " + played, x, 420,
+                 26, kWhite.with_alpha(0.7f));
 
         const Rect play{x, 540, 220, 64};
         list.glow(play, 32, 18, it.accent.with_alpha(0.35f));
         list.rounded_rect(play, 32, kWhite);
         ui::draw_button(list, fonts, ui::GlyphStyle::light(), ui::Button::cross, play.x + 22,
                         play.cy(), 34);
-        ui::text(list, fonts.semibold, "Play", play.x + 72, play.cy() + 10, 28,
+        // "Select", not "Play": Cross opens the game's details, where Play and
+        // Resume are. A button that said Play and then showed a panel was
+        // promising the wrong thing.
+        ui::text(list, fonts.semibold, "Select", play.x + 72, play.cy() + 10, 28,
                  Color::rgb(0x0b0d16));
         const Rect more{x + 240, 540, 64, 64};
         list.bordered_rect(more, 32, kWhite.with_alpha(0.1f), 2, kWhite.with_alpha(0.3f));
@@ -1313,7 +1339,8 @@ class Aurora final : public app::Concept
         }
 
         // Actions: one highlight that springs between the rows.
-        const char *actions[kActions] = {"Play", "Cheats", "Close"};
+        const bool resumable = psp5::HasSaveState(entry(focused_item()).disc_id);
+        const char *actions[kActions] = {"Play", "Resume", "Cheats", "Close"};
         const float ax = sheet.x + sheet.w - 56 - 420;
         const float ay = sheet.y + 76;
         list.rounded_rect({ax, ay + action_position_.value * 84, 420, 72}, 36, kWhite);
@@ -1324,8 +1351,11 @@ class Aurora final : public app::Concept
             if (!focused)
                 list.bordered_rect({ax, y, 420, 72}, 36, kWhite.with_alpha(0.06f), 1.5f,
                                    kWhite.with_alpha(0.18f));
+            const bool idle = i == 1 && !resumable;
             ui::text(list, fonts.semibold, actions[i], ax + 36, y + 46, 26,
-                     focused ? Color::rgb(0x0b0d16) : kWhite.with_alpha(0.9f));
+                     focused      ? Color::rgb(0x0b0d16)
+                     : idle       ? kWhite.with_alpha(0.35f)
+                                  : kWhite.with_alpha(0.9f));
         }
         list.pop_opacity();
     }

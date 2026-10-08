@@ -411,10 +411,30 @@ index 63f1ed8ac..cb0e2e526 100644
  	std::lock_guard<std::mutex> lock(mutex_);
  
 diff --git a/UI/EmuScreen.cpp b/UI/EmuScreen.cpp
-index b29484204..251393922 100644
+index b29484204..eb1186a70 100644
 --- a/UI/EmuScreen.cpp
 +++ b/UI/EmuScreen.cpp
-@@ -1486,7 +1486,9 @@ void EmuScreen::update() {
+@@ -1,5 +1,9 @@
+ // Copyright (c) 2012- PPSSPP Project.
+ 
++// psp5: declared here rather than beside the drawing hooks further down, which
++// come long after the boot code that asks it.
++extern "C" bool PS5_AchievementsEnabled();
++
+ // This program is free software: you can redistribute it and/or modify
+ // it under the terms of the GNU General Public License as published by
+ // the Free Software Foundation, version 2.0 or later versions.
+@@ -363,6 +367,9 @@ void EmuScreen::bootComplete() {
+ 	}, (void *)this);
+ 
+ 	// Initialize retroachievements, now that we're on the right thread.
++#if PPSSPP_PLATFORM(PS5)
++	g_Config.bAchievementsEnable = PS5_AchievementsEnabled();
++#endif
+ 	if (g_Config.bAchievementsEnable) {
+ 		std::string errorString;
+ 		Achievements::SetGame(PSP_CoreParameter().fileToStart, PSP_CoreParameter().fileType, PSP_LoadedFile());
+@@ -1486,7 +1493,9 @@ void EmuScreen::update() {
  
  	if (pauseTrigger_) {
  		pauseTrigger_ = false;
@@ -424,7 +444,7 @@ index b29484204..251393922 100644
  	}
  
  	if (!PSP_IsInited())
-@@ -1933,6 +1935,11 @@ void EmuScreen::runImDebugger() {
+@@ -1933,6 +1942,11 @@ void EmuScreen::runImDebugger() {
  	}
  }
  
@@ -436,7 +456,7 @@ index b29484204..251393922 100644
  void EmuScreen::renderImDebugger() {
  	if (g_Config.bShowImDebugger) {
  		Draw::DrawContext *draw = screenManager()->getDrawContext();
-@@ -1943,6 +1950,13 @@ void EmuScreen::renderImDebugger() {
+@@ -1943,6 +1957,13 @@ void EmuScreen::renderImDebugger() {
  }
  
  bool EmuScreen::hasVisibleUI() {
@@ -450,7 +470,7 @@ index b29484204..251393922 100644
  	// Regular but uncommon UI.
  	if (saveStatePreview_->GetVisibility() != UI::V_GONE || loadingSpinner_->GetVisibility() == UI::V_VISIBLE)
  		return true;
-@@ -1988,6 +2002,13 @@ void EmuScreen::renderUI() {
+@@ -1988,6 +2009,13 @@ void EmuScreen::renderUI() {
  		}
  	}
  

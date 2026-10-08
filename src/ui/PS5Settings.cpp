@@ -20,6 +20,7 @@
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/RetroAchievements.h"
+#include "Core/SaveState.h"
 
 #include "PS5Log.h"
 #include "ui/PS5Prefs.h"
@@ -86,6 +87,47 @@ Settings &SettingsPanel() {
 
 bool MenuSoundsEnabled() {
 	return prefs::soundSet() != prefs::SoundSet::off;
+}
+
+// Called once, after NativeInit has read the configuration: PPSSPP only builds
+// its achievements client when the setting is on, and the setting it just read
+// knows nothing about psp5's.
+void ApplyAchievementsPreference() {
+	if (!prefs::achievements() || g_Config.bAchievementsEnable) {
+		return;
+	}
+	g_Config.bAchievementsEnable = true;
+	Achievements::UpdateSettings();
+	psp5::Trace("achievements: on, from psp5's own settings");
+}
+
+// Asked by PPSSPP as a game boots (see tools/mkpatch.py): whether achievements
+// are on is the player's answer, not whatever a per-game config recorded before
+// they signed in.
+extern "C" bool PS5_AchievementsEnabled() {
+	return psp5::prefs::achievements();
+}
+
+std::string PlayedTime(const std::string &discId) {
+	if (discId.empty()) {
+		return std::string();
+	}
+	std::string text;
+	if (!g_Config.TimeTracker().GetPlayedTimeString(discId, &text)) {
+		return std::string();
+	}
+	return text;
+}
+
+bool HasSaveState(const std::string &discId) {
+	if (discId.empty()) {
+		return false;
+	}
+	// PPSSPP names its states after the disc id and version together, which is
+	// what GetGamePrefix builds while a game runs. On the shelf there is no
+	// running game, so the usual version is assumed - a game whose own version
+	// differs simply shows no state to resume, rather than offering a wrong one.
+	return SaveState::GetNewestSlot(discId + "_1.00") >= 0;
 }
 
 bool AchievementsLoggedIn() {
@@ -171,6 +213,7 @@ void AchievementsLogin(const std::string &user, const std::string &password) {
 	// Turning the system on is part of signing in: a login against a disabled
 	// client would succeed and then do nothing.
 	g_Config.bAchievementsEnable = true;
+	prefs::setAchievements(true);
 	Achievements::UpdateSettings();
 	psp5::Trace("achievements: signing in as %s", user.c_str());
 	g_signInAttempted = true;
@@ -182,6 +225,7 @@ void AchievementsLogin(const std::string &user, const std::string &password) {
 }
 
 void AchievementsLogout() {
+	prefs::setAchievements(false);
 	Achievements::Logout();
 	g_Config.Save("psp5 achievements");
 	psp5::Trace("achievements: signed out");

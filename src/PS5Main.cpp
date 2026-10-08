@@ -38,6 +38,7 @@
 #include "PS5Log.h"
 #include "PS5Paths.h"
 #include "ui/PS5Prefs.h"
+#include "ui/PS5Settings.h"
 #include "PS5VulkanContext.h"
 #include "ui/PS5AuroraLauncher.h"
 #include "platform/platform.h"
@@ -502,6 +503,8 @@ int main(int argc, char *argv[]) {
 	// states were written into a PPSSPP_STATE directory that did not exist, and
 	// failed. PPSSPP's own routine rather than a hand-written list, so it stays
 	// right if the set changes.
+	psp5::ApplyAchievementsPreference();
+
 	if (!CreateSysDirectories()) {
 		psp5::Trace("warning: could not create the PSP directories under %s", memstick.c_str());
 	}
@@ -567,6 +570,10 @@ int main(int argc, char *argv[]) {
 
 		psp5::Trace("booting %s", game.c_str());
 		psp5::SetCheatOverlayGame(psp5::PendingLaunchDiscId());
+		// Resume is PPSSPP's own auto-load, aimed at the newest state for this
+		// boot only: timing a load from here would mean guessing when the game
+		// is far enough along to take one.
+		g_Config.iAutoLoadSaveState = psp5::PendingLaunchResumes() ? 2 : 0;
 		psp5::ClearGameEnded();
 		PS5_BootGame(game.c_str());
 

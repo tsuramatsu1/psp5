@@ -93,6 +93,15 @@ bool MenuSoundsEnabled();
 // Whether this build can reach the server at all. See the comment on the
 // definition: it cannot yet, and the panel says so instead of inviting a
 // sign-in that goes nowhere.
+// How long this game has been played, worded as PPSSPP words it, or empty if it
+// has never been started. PPSSPP keeps this per game id in its own config.
+std::string PlayedTime(const std::string &discId);
+
+// Whether this game has a save state to pick up from.
+bool HasSaveState(const std::string &discId);
+
+// Applies psp5's own achievements preference to PPSSPP, after NativeInit.
+void ApplyAchievementsPreference();
 bool AchievementsAvailable();
 bool AchievementsLoggedIn();
 std::string AchievementsUser();
