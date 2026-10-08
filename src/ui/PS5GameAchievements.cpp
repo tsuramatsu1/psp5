@@ -34,6 +34,65 @@ GameAchievements &GameAchievementList() {
 	return list;
 }
 
+namespace {
+AchievementFilter g_filter = AchievementFilter::all;
+}  // namespace
+
+AchievementFilter achievementFilter() {
+	return g_filter;
+}
+
+void setAchievementFilter(AchievementFilter filter) {
+	g_filter = filter;
+	GameAchievementList().ApplyFilter();
+}
+
+AchievementFilter stepAchievementFilter(int delta) {
+	const int count = (int)AchievementFilter::count;
+	const int at = (((int)g_filter + delta) % count + count) % count;
+	setAchievementFilter((AchievementFilter)at);
+	return g_filter;
+}
+
+const char *achievementFilterName(AchievementFilter filter) {
+	switch (filter) {
+		case AchievementFilter::locked: return "LOCKED";
+		case AchievementFilter::unlocked: return "UNLOCKED";
+		default: return "ALL";
+	}
+}
+
+bool achievementPasses(bool unlocked, AchievementFilter filter) {
+	switch (filter) {
+		case AchievementFilter::locked: return !unlocked;
+		case AchievementFilter::unlocked: return unlocked;
+		default: return true;
+	}
+}
+
+void GameAchievements::ApplyFilter() {
+	shown_.clear();
+	for (std::size_t i = 0; i < rows_.size(); ++i) {
+		if (rows_[i].header) {
+			// A group's label is worth showing only if something under it is.
+			bool any = false;
+			for (std::size_t j = i + 1; j < rows_.size() && !rows_[j].header; ++j) {
+				if (achievementPasses(rows_[j].unlocked, g_filter)) {
+					any = true;
+					break;
+				}
+			}
+			if (any) {
+				shown_.push_back(i);
+			}
+			continue;
+		}
+		if (achievementPasses(rows_[i].unlocked, g_filter)) {
+			shown_.push_back(i);
+		}
+	}
+}
+
 void GameAchievements::Open(const std::string &path, const std::string &discId) {
 	Close();
 	open_ = true;
@@ -181,6 +240,7 @@ void GameAchievements::Read() {
 	}
 	rc_client_destroy_achievement_list(list);
 
+	ApplyFilter();
 	state_ = rows_.empty() ? State::none : State::ready;
 	psp5::Trace("achievements: %u row(s) for %s", (unsigned)rows_.size(), path_.c_str());
 
@@ -295,6 +355,7 @@ void GameAchievements::Close() {
 	Retire();
 	queue_.clear();
 	rows_.clear();
+	shown_.clear();
 	summary_.clear();
 	points_.clear();
 	path_.clear();

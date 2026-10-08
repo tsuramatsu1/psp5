@@ -27,6 +27,7 @@
 #include "ext/rcheevos/include/rc_client.h"
 
 #include "PS5Log.h"
+#include "ui/PS5GameAchievements.h"
 #include "PS5OverlayDraw.h"
 #include "PS5Overlay.h"
 
@@ -137,7 +138,20 @@ void Rebuild() {
 		if (!bucket.num_achievements) {
 			continue;
 		}
-		std::snprintf(value, sizeof(value), "%u", bucket.num_achievements);
+		// What this group has left after the filter. A label with nothing under
+		// it is not worth a row.
+		uint32_t passing = 0;
+		for (uint32_t a = 0; a < bucket.num_achievements; ++a) {
+			const rc_client_achievement_t *achievement = bucket.achievements[a];
+			if (achievement && psp5::achievementPasses(achievement->unlocked != 0,
+			                                           psp5::achievementFilter())) {
+				++passing;
+			}
+		}
+		if (!passing) {
+			continue;
+		}
+		std::snprintf(value, sizeof(value), "%u", passing);
 		Row head;
 			head.label = bucket.label ? bucket.label : "";
 			head.value = value;
@@ -146,7 +160,8 @@ void Rebuild() {
 
 		for (uint32_t a = 0; a < bucket.num_achievements; ++a) {
 			const rc_client_achievement_t *achievement = bucket.achievements[a];
-			if (!achievement) {
+			if (!achievement || !psp5::achievementPasses(achievement->unlocked != 0,
+			                                            psp5::achievementFilter())) {
 				continue;
 			}
 			std::snprintf(value, sizeof(value), "%u", achievement->points);
@@ -213,6 +228,22 @@ void ToggleAchievementsBar() {
 	            (int)Achievements::IsBlockingExecution(), (int)Achievements::IsActive());
 }
 
+void AchievementsBarFilter(int delta) {
+	if (!g_open) {
+		return;
+	}
+	psp5::stepAchievementFilter(delta);
+	Rebuild();
+	g_row = 0;
+	// Past any group label, onto something that can be selected.
+	for (int i = 0; i < (int)g_rows.size(); ++i) {
+		if (!g_rows[(std::size_t)i].header) {
+			g_row = i;
+			break;
+		}
+	}
+}
+
 void AchievementsBarMove(int delta) {
 	if (!g_open || g_rows.empty()) {
 		return;
@@ -276,6 +307,9 @@ extern "C" void PS5_DrawAchievementsBar(UIContext *ui) {
 	// ---- the head ----
 	ui->SetFontScale(0.52f, 0.52f);
 	ui->DrawText("ACHIEVEMENTS", left, 78.0f * scale, psp5::kPrimary, ALIGN_LEFT | ALIGN_TOP);
+	ui->DrawTextRect(psp5::achievementFilterName(psp5::achievementFilter()),
+	                 Bounds(x + width - pad - 200.0f, 78.0f * scale, 200.0f, 24.0f), psp5::kInkDim,
+	                 ALIGN_RIGHT | ALIGN_TOP);
 	if (!psp5::g_game.empty()) {
 		ui->SetFontScale(0.95f, 0.95f);
 		ui->DrawTextRect(psp5::g_game, Bounds(left, 118.0f * scale, inner, 44.0f), psp5::kInk,
@@ -349,9 +383,10 @@ extern "C" void PS5_DrawAchievementsBar(UIContext *ui) {
 		}
 
 		if (focused) {
-			psp5::FillRound(ui, Bounds(x + 8.0f, y, width - 16.0f, height - 8.0f), 16.0f,
-			                0x1AFFFFFF);
-			psp5::FillRound(ui, Bounds(x, y + 8.0f, 4.0f, height - 24.0f), 2.0f, psp5::kPrimary);
+			// Square, and the full width of the bar: the row itself is lit,
+			// rather than a pill being laid over it.
+			ui->FillRect(UI::Drawable(0x1AFFFFFF), Bounds(x, y, width, height - 8.0f));
+			ui->FillRect(UI::Drawable(psp5::kPrimary), Bounds(x, y, 4.0f, height - 8.0f));
 		}
 
 		// The badge RetroAchievements shows, from PPSSPP's own icon cache.

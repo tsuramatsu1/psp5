@@ -24,6 +24,8 @@ bool AchievementsBarOpen();
 void ToggleAchievementsBar();
 void CloseAchievementsBar();
 void AchievementsBarMove(int delta);
+// Left and right: all, locked, unlocked. The same setting the home screen uses.
+void AchievementsBarFilter(int delta);
 
 // Called once a frame while a game runs, so a bar that is up keeps up with what
 // the player has just unlocked.

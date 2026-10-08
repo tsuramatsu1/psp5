@@ -952,6 +952,7 @@ class Aurora final : public app::Concept
                 feedback.play(audio::Cue::open);
                 achievements_open_ = true;
                 achievement_ = 0;
+                psp5::setAchievementFilter(psp5::AchievementFilter::all);
                 psp5::GameAchievementList().Open(entry(focused_item()).path,
                                                  entry(focused_item()).disc_id);
             }
@@ -1073,6 +1074,18 @@ class Aurora final : public app::Concept
         cheat_ = std::clamp(cheat_, 0, std::max(0, cheat_rows() - 1));
     }
 
+    // The first row that is an achievement rather than a group's label.
+    int first_achievement() const
+    {
+        const psp5::GameAchievements &list = psp5::GameAchievementList();
+        for (std::size_t i = 0; i < list.size(); ++i)
+        {
+            if (!list.row(i).header)
+                return static_cast<int>(i);
+        }
+        return 0;
+    }
+
     void update_achievements(const InputFrame &input, app::Feedback &feedback)
     {
         psp5::GameAchievements &list = psp5::GameAchievementList();
@@ -1086,13 +1099,30 @@ class Aurora final : public app::Concept
             return;
         }
         const int count = static_cast<int>(list.size());
+        if (input.nav == Direction::left || input.nav == Direction::right)
+        {
+            psp5::stepAchievementFilter(input.nav == Direction::right ? 1 : -1);
+            achievement_ = first_achievement();
+            feedback.play(audio::Cue::tab);
+            return;
+        }
         if (count > 0 && (input.nav == Direction::up || input.nav == Direction::down))
         {
-            const int next =
-                std::clamp(achievement_ + (input.nav == Direction::down ? 1 : -1), 0, count - 1);
-            if (next != achievement_)
+            // A group's label is drawn, but there is nothing to select on it -
+            // landing there looked like the first achievement had vanished.
+            const int step = input.nav == Direction::down ? 1 : -1;
+            int at = achievement_;
+            for (int guard = 0; guard < count; ++guard)
             {
-                achievement_ = next;
+                at += step;
+                if (at < 0 || at >= count)
+                    return;  // the ends refuse rather than wrap
+                if (!list.row(static_cast<std::size_t>(at)).header)
+                    break;
+            }
+            if (at != achievement_ && at >= 0 && at < count)
+            {
+                achievement_ = at;
                 feedback.play(audio::Cue::focus, 1.0f, 0.35f);
             }
         }
@@ -1657,6 +1687,55 @@ class Aurora final : public app::Concept
     // This game's achievements, as a bar down the right edge - the shape the
     // console uses for a list that belongs beside what is on screen rather than
     // instead of it. The same shape as the in-game bar on R1 + R3.
+    // The kit's d-pad glyph has all four arms, which says "any direction". In
+    // this bar up and down move the cursor and left and right move the filter,
+    // so each hint shows only its own axis.
+    void draw_dpad_axis(gfx::DrawList &list, const ui::GlyphStyle &style, float cx, float cy,
+                        float size, bool vertical) const
+    {
+        const float half = size * 0.5f;
+        list.circle(cx, cy, half, style.body);
+        list.ring(cx, cy, half - 1.0f, 1.5f, style.edge);
+        const float arm = size * 0.3f;
+        const float thick = size * 0.2f;
+        if (vertical)
+            list.rounded_rect({cx - thick * 0.5f, cy - arm, thick, arm * 2}, thick * 0.3f,
+                              style.ink);
+        else
+            list.rounded_rect({cx - arm, cy - thick * 0.5f, arm * 2, thick}, thick * 0.3f,
+                              style.ink);
+    }
+
+    // The bar's own hint row, laid out from the right like the kit's.
+    void draw_achievement_hints(gfx::DrawList &list, const ui::GlyphStyle &style) const
+    {
+        const ui::Fonts &fonts = context_.fonts;
+        constexpr float kSize = 40.0f;
+        constexpr float kCy = 1010.0f;
+        constexpr float kIconGap = 12.0f;
+        constexpr float kItemGap = 44.0f;
+        constexpr float kText = 26.0f;
+        const char *labels[3] = {"Move", "Filter", "Back"};
+
+        float total = 0.0f;
+        for (int i = 0; i < 3; ++i)
+            total += kSize + kIconGap + fonts.regular.font->measure(labels[i], kText) +
+                     (i < 2 ? kItemGap : 0.0f);
+
+        float x = 1824.0f - total;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (i == 2)
+                ui::draw_button(list, fonts, style, ui::Button::circle, x + kSize * 0.5f, kCy,
+                                kSize);
+            else
+                draw_dpad_axis(list, style, x + kSize * 0.5f, kCy, kSize, i == 0);
+            x += kSize + kIconGap;
+            ui::text(list, fonts.regular, labels[i], x, kCy + kText * 0.35f, kText, style.label);
+            x += fonts.regular.font->measure(labels[i], kText) + kItemGap;
+        }
+    }
+
     void draw_achievements(gfx::DrawList &list) const
     {
         const ui::Fonts &fonts = context_.fonts;
@@ -1672,6 +1751,10 @@ class Aurora final : public app::Concept
         const float inner = kWidth - 88;
         ui::text(list, fonts.semibold, "ACHIEVEMENTS", left, 92, 20, palette_[3].value(),
                  gfx::Align::left, 4.0f);
+        // Left and right move it; the hint row says so.
+        ui::text(list, fonts.semibold,
+                 psp5::achievementFilterName(psp5::achievementFilter()), x + kWidth - 44, 92, 20,
+                 kWhite.with_alpha(0.75f), gfx::Align::right, 4.0f);
         ui::text(list, fonts.display,
                  fonts.display.font->fit(item(focused_item()).title, 38, inner), left, 146, 38,
                  kWhite);
@@ -1705,11 +1788,10 @@ class Aurora final : public app::Concept
         list.rounded_rect({left, 226, inner, 6}, 3, kWhite.with_alpha(0.14f));
         list.rounded_rect({left, 226, inner * view.fraction(), 6}, 3, palette_[3].value());
 
-        const std::span<const psp5::GameAchievement> rows = view.rows();
+        const int count = static_cast<int>(view.size());
         constexpr float kDetail = 19.0f;  // the description's size
         constexpr float kLine = 22.0f;    // ... and its line height
-        const float top = 272.0f;
-        const int count = static_cast<int>(rows.size());
+        const float top = 284.0f;
         const float textW = inner - 72 - 54;
 
         // What an achievement asks for is a sentence, and a sentence is as long
@@ -1718,7 +1800,7 @@ class Aurora final : public app::Concept
         // that opens: it shows the description in full, and the rest show the
         // name and what they are worth.
         const auto row_height = [&](int index) {
-            const psp5::GameAchievement &row = rows[static_cast<std::size_t>(index)];
+            const psp5::GameAchievement &row = view.row(static_cast<std::size_t>(index));
             if (row.header)
                 return 44.0f;
             if (index != achievement_ || row.detail.empty())
@@ -1747,7 +1829,7 @@ class Aurora final : public app::Concept
         float y = top;
         for (int i = first; i < count; ++i)
         {
-            const psp5::GameAchievement &row = rows[static_cast<std::size_t>(i)];
+            const psp5::GameAchievement &row = view.row(static_cast<std::size_t>(i));
             const bool focused = i == achievement_;
             const float height = row_height(i);
             // Whole rows only. A row that would cross the hints is left for the
@@ -1765,8 +1847,8 @@ class Aurora final : public app::Concept
 
             if (focused)
             {
-                list.rounded_rect({x + 8, y, kWidth - 16, height - 8}, 16, kWhite.with_alpha(0.1f));
-                list.rounded_rect({x, y + 8, 4, height - 24}, 2, palette_[3].value());
+                list.rounded_rect({x, y, kWidth, height - 8}, 0, kWhite.with_alpha(0.1f));
+                list.rounded_rect({x, y, 4, height - 8}, 0, palette_[3].value());
             }
 
             // The badge RetroAchievements shows, once it has arrived. Until
@@ -1806,10 +1888,21 @@ class Aurora final : public app::Concept
             y += height;
         }
 
+        // Counted in achievements, not in rows: the group labels are rows too,
+        // so the first achievement sits at index 1 and called itself the second.
+        int total = 0;
+        int at = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            if (view.row(static_cast<std::size_t>(i)).header)
+                continue;
+            ++total;
+            if (i <= achievement_)
+                at = total;
+        }
         char counter[48];
-        std::snprintf(counter, sizeof(counter), "%d of %d", achievement_ + 1, count);
-        ui::text(list, fonts.regular, counter, x + kWidth - 44, 92, 20, kWhite.with_alpha(0.55f),
-                 gfx::Align::right);
+        std::snprintf(counter, sizeof(counter), "%d of %d", at, total);
+        ui::text(list, fonts.regular, counter, left, 258, 20, kWhite.with_alpha(0.55f));
     }
 
     void draw_cheats(gfx::DrawList &list, const Rect &sheet) const
@@ -1914,9 +2007,7 @@ class Aurora final : public app::Concept
             return;
         if (achievements_open_)
         {
-            const ui::Hint hints[] = {{ui::Button::dpad, "Move"},
-                                      {ui::Button::circle, "Back"}};
-            ui::draw_hints(list, fonts, style, hints, 2, 1824, true);
+            draw_achievement_hints(list, style);
         }
         else if (cheats_open_)
         {

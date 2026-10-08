@@ -158,7 +158,7 @@ void SendAxes(int player, const pad &state) {
 // System_GetPropertyFloat.
 constexpr int kTelevisionDp = 1280;
 
-// L1 + L3, and the panel's own buttons while it is up. Returns true when the
+// L2 + R2, and the panel's own buttons while it is up. Returns true when the
 // panel has the pad, in which case the game is shown nothing this frame.
 //
 // Edge-triggered off `pressed` rather than `held`, so a button that is still
@@ -166,7 +166,7 @@ constexpr int kTelevisionDp = 1280;
 // short, and a list that scrolled under a resting thumb would be worse than one
 // that needs a press per row.
 bool PollCheatOverlay(const pad &state) {
-	constexpr uint32_t kMenuCombo = PAD_L1 | PAD_L3;
+	constexpr uint32_t kMenuCombo = PAD_L2 | PAD_R2;
 	constexpr uint32_t kAchievementsCombo = PAD_R1 | PAD_R3;
 	// A combo is a press of either button while the other is already down, so it
 	// fires whichever order they arrive in.
@@ -186,6 +186,12 @@ bool PollCheatOverlay(const pad &state) {
 		}
 		if (state.pressed & PAD_DOWN) {
 			psp5::AchievementsBarMove(1);
+		}
+		if (state.pressed & PAD_LEFT) {
+			psp5::AchievementsBarFilter(-1);
+		}
+		if (state.pressed & PAD_RIGHT) {
+			psp5::AchievementsBarFilter(1);
 		}
 		if (state.pressed & PAD_CIRCLE) {
 			psp5::CloseAchievementsBar();
@@ -226,7 +232,8 @@ bool PollCheatOverlay(const pad &state) {
 //     pad->pressed = pad->held & ~before;
 //
 // A fresh pad each frame makes `before` zero, so every held button reads as
-// newly pressed - which turned L1 + L3 into a press on every frame it was held,
+// newly pressed - which turned the menu combo into a press on every frame it was
+// held,
 // opening and closing the cheat panel too fast to see.
 pad g_pad{};
 

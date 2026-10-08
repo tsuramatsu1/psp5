@@ -64,7 +64,7 @@ In a game:
 
 | | |
 | --- | --- |
-| **L1 + L3** | the menu: cheats, save states, and the way out |
+| **L2 + R2** | the menu: cheats, save states, and the way out |
 | **R1 + R3** | the achievements for this game |
 
 ## What it is made of

@@ -474,27 +474,28 @@ extern "C" void PS5_DrawOverlays(UIContext *ui) {
 	}
 
 	// The same bar the home screen draws, and the same one the achievements use
-	// on R1 + R3: the right-hand edge, the rest of the screen dimmed, a small
-	// tracked label over a large title, then the rows. A row is a highlight and
-	// an accent edge rather than a card with a border - the home screen does not
-	// draw cards, and these are meant to read as one program.
+	// on R1 + R3 - but down the left edge, so the two can be told apart at a
+	// glance and could in principle be open at once. A small tracked label over
+	// a large title, then the rows; a row is a highlight and an accent edge
+	// rather than a card with a border, because the home screen draws no cards
+	// and these are meant to read as one program.
 	const Bounds screen = ui->GetBounds();
 	const float width = std::min(620.0f, screen.w * 0.46f);
-	const float x = screen.w - width;
+	const float x = 0.0f;
 	const float pad = 44.0f;
 	const float left = x + pad;
 	const float inner = width - pad * 2.0f;
 	const float scale = screen.h / 1080.0f;
 	const float rowHeight = 72.0f;
 
-	ui->FillRect(UI::Drawable(psp5::kShade), Bounds(0.0f, 0.0f, x, screen.h));
+	ui->FillRect(UI::Drawable(psp5::kShade), Bounds(width, 0.0f, screen.w - width, screen.h));
 	ui->FillRect(UI::Drawable(psp5::kPage), Bounds(x, 0.0f, width, screen.h));
-	ui->FillRect(UI::Drawable(0x2EFFFFFF), Bounds(x, 0.0f, 1.5f, screen.h));
+	ui->FillRect(UI::Drawable(0x2EFFFFFF), Bounds(width - 1.5f, 0.0f, 1.5f, screen.h));
 
 	// ---- the head ----
 	ui->SetFontStyle(ui->GetTheme().uiFont);
 	ui->SetFontScale(0.52f, 0.52f);
-	ui->DrawText(psp5::g_page == psp5::Page::root ? "L1 + L3  CLOSE" : "CIRCLE  BACK", left,
+	ui->DrawText(psp5::g_page == psp5::Page::root ? "L2 + R2  CLOSE" : "CIRCLE  BACK", left,
 	             78.0f * scale, psp5::kPrimary, ALIGN_LEFT | ALIGN_TOP);
 	ui->SetFontScale(0.95f, 0.95f);
 	ui->DrawTextRect(psp5::PageTitle(), Bounds(left, 118.0f * scale, inner, 44.0f), psp5::kInk,

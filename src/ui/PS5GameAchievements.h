@@ -18,6 +18,25 @@
 
 namespace psp5 {
 
+// Which achievements the lists show. One setting, shared by the home screen's
+// bar and the one that opens over a running game, so moving it in one does not
+// leave the other showing something else.
+enum class AchievementFilter {
+	all,
+	locked,
+	unlocked,
+	count,
+};
+
+AchievementFilter achievementFilter();
+void setAchievementFilter(AchievementFilter filter);
+// Steps the filter by delta, wrapping. Returns what it landed on.
+AchievementFilter stepAchievementFilter(int delta);
+const char *achievementFilterName(AchievementFilter filter);
+// Whether a row survives the filter. Headers are kept by the caller only when
+// something under them did.
+bool achievementPasses(bool unlocked, AchievementFilter filter);
+
 // One achievement, as the shelf shows it.
 struct GameAchievement {
 	std::string title;
@@ -63,8 +82,12 @@ public:
 	State state() const { return state_; }
 	bool identifying() const { return busy_; }
 	bool open() const { return open_; }
-	std::span<const GameAchievement> rows() const { return rows_; }
-	std::size_t size() const { return rows_.size(); }
+	// The rows the filter lets through. The full list is kept behind it, so a
+	// badge that has arrived is not lost when the filter moves.
+	const GameAchievement &row(std::size_t index) const { return rows_[shown_[index]]; }
+	std::size_t size() const { return shown_.size(); }
+	// Called when the filter changes, and after the list is read.
+	void ApplyFilter();
 
 	// Gives every badge whose PNG has arrived to `upload`, which turns it into
 	// a texture. Called from the frame loop, because that is where the renderer
@@ -117,6 +140,7 @@ private:
 	std::atomic<int> inFlight_ {0};
 
 	std::vector<GameAchievement> rows_;
+	std::vector<std::size_t> shown_;
 	std::string summary_;
 	std::string points_;
 	std::string path_;

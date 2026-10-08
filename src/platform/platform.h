@@ -32,6 +32,10 @@ enum {
    PAD_RIGHT = 0x000020,
    PAD_DOWN = 0x000040,
    PAD_LEFT = 0x000080,
+   /* The triggers report a button bit as well as their analog travel, at the
+    * threshold the console decides. psp5 uses the bits for its menu combo. */
+   PAD_L2 = 0x000100,
+   PAD_R2 = 0x000200,
    PAD_L1 = 0x000400,
    PAD_R1 = 0x000800,
    PAD_TRIANGLE = 0x001000,

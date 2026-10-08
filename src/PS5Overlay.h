@@ -10,7 +10,7 @@ class UIContext;
 
 namespace psp5 {
 
-// A bar down the left of the screen, opened with L1 + L3 while a game runs: the
+// A bar down the left of the screen, opened with L2 + R2 while a game runs: the
 // game's cheats, its save state slots, and the way out of it.
 //
 // The home screen can do this too, on a game's details sheet, but only before
