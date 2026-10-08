@@ -33,7 +33,9 @@
 #include "Core/SaveState.h"
 #include "Core/System.h"
 
+#include "PS5Achievements.h"
 #include "PS5Log.h"
+#include "PS5OverlayDraw.h"
 #include "platform/platform.h"
 #include "ui/PS5Cheats.h"
 
@@ -42,17 +44,6 @@
 extern "C" void PS5_ReloadCheats();
 
 namespace psp5 {
-
-// Aurora's palette. The bar itself is solid black rather than the design's
-// near-black: it sits over moving, bright artwork, and anything translucent let
-// that through and made the text swim.
-constexpr uint32_t kInk = 0xFFF2F4F8;
-constexpr uint32_t kInkDim = 0x99F2F4F8;
-constexpr uint32_t kInkFaint = 0x55F2F4F8;
-constexpr uint32_t kAccent = 0xFF7FF0D8;
-constexpr uint32_t kPanel = 0xFF000000;
-constexpr uint32_t kTrackOff = 0x40FFFFFF;
-constexpr uint32_t kShade = 0xB0000000;
 
 namespace {
 
@@ -122,9 +113,20 @@ void Rebuild() {
 			break;
 		}
 		case Page::cheats: {
-			g_rows.push_back({Kind::cheatMaster, "Cheats enabled", "", 0, g_Config.bEnableCheats,
+			g_rows.push_back({Kind::cheatMaster, "Cheats enabled", "", 0, CheatsEnabled(),
 			                  true, false, true});
 			const std::span<const CheatEntry> cheats = CheatList().items();
+			if (!CheatsEnabled()) {
+				// Switched off, the codes below do nothing, and a list of
+				// switches that cannot take effect invites turning them on and
+				// wondering why nothing happened.
+				std::snprintf(text, sizeof(text), "%u code%s in this game's file",
+				              (unsigned)cheats.size(), cheats.size() == 1 ? "" : "s");
+				g_rows.push_back({Kind::note,
+				                  cheats.empty() ? "Turn this on to use cheats" : text, "", 0,
+				                  false, false, false, false});
+				break;
+			}
 			for (int i = 0; i < (int)cheats.size(); ++i) {
 				g_rows.push_back({Kind::cheat, cheats[(std::size_t)i].name, "", i,
 				                  cheats[(std::size_t)i].enabled, true, false, true});
@@ -189,6 +191,8 @@ void CloseCheatOverlay() {
 	}
 	g_open = false;
 	psp5::Trace("menu: closed");
+	// The switch belongs to this game, and the menu is where it was changed.
+	SaveCheatsEnabled();
 	if (CheatList().dirty()) {
 		CheatList().Save();
 		// The engine holds the codes it parsed at boot, so the file on its own
@@ -203,6 +207,7 @@ void ToggleCheatOverlay() {
 		CloseCheatOverlay();
 		return;
 	}
+	CloseAchievementsBar();
 	// Read on the way in, so a file copied while the title was running is found.
 	CheatList().Load(g_discId);
 	g_slot = std::clamp(SaveState::GetCurrentSlot(), 0, 7);
@@ -280,7 +285,7 @@ void CheatOverlaySelect() {
 			GoTo(Page::saveState);
 			return;
 		case Kind::cheatMaster:
-			g_Config.bEnableCheats = !g_Config.bEnableCheats;
+			SetCheatsEnabled(!CheatsEnabled());
 			// hleCheat notices this within a second by itself, but waiting a
 			// second to see a switch respond reads as a panel that missed the
 			// press.
@@ -338,39 +343,18 @@ void CheatOverlaySelect() {
 
 }  // namespace psp5
 
-namespace {
-
-// A switch, not a tick box: a track with the knob at one end, filled in the
-// accent colour when on. Built from rectangles, which is what UIContext draws
-// without an atlas image behind it.
-void DrawToggle(UIContext *ui, float x, float y, bool on) {
-	constexpr float kWidth = 46.0f;
-	constexpr float kHeight = 24.0f;
-	constexpr float kInset = 3.0f;
-	const float knob = kHeight - kInset * 2.0f;
-
-	ui->FillRect(UI::Drawable(on ? psp5::kAccent : psp5::kTrackOff), Bounds(x, y, kWidth, kHeight));
-	const float knobX = on ? x + kWidth - kInset - knob : x + kInset;
-	ui->FillRect(UI::Drawable(on ? psp5::kPanel : psp5::kInk),
-	             Bounds(knobX, y + kInset, knob, knob));
-}
-
-// Points the way into a submenu.
-void DrawChevron(UIContext *ui, float x, float cy, uint32_t ink) {
-	ui->FillRect(UI::Drawable(ink), Bounds(x, cy - 9.0f, 3.0f, 11.0f));
-	ui->FillRect(UI::Drawable(ink), Bounds(x, cy - 1.0f, 3.0f, 11.0f));
-	ui->FillRect(UI::Drawable(ink), Bounds(x - 5.0f, cy - 6.0f, 5.0f, 3.0f));
-	ui->FillRect(UI::Drawable(ink), Bounds(x - 5.0f, cy + 4.0f, 5.0f, 3.0f));
-}
-
-}  // namespace
-
 extern "C" bool PS5_WantsOverlay() {
-	return psp5::CheatOverlayOpen();
+	// Either bar keeps renderUI running, which is the only reason it is called
+	// at all when PPSSPP has nothing of its own to draw.
+	return psp5::CheatOverlayOpen() || psp5::AchievementsBarOpen();
 }
 
 extern "C" void PS5_DrawOverlays(UIContext *ui) {
-	if (!ui || !psp5::CheatOverlayOpen()) {
+	if (!ui) {
+		return;
+	}
+	PS5_DrawAchievementsBar(ui);
+	if (!psp5::CheatOverlayOpen()) {
 		return;
 	}
 
@@ -379,24 +363,29 @@ extern "C" void PS5_DrawOverlays(UIContext *ui) {
 	// anchored to an edge reads as part of the screen rather than as something
 	// dropped on top of it.
 	const Bounds screen = ui->GetBounds();
-	const float width = std::min(420.0f, screen.w * 0.42f);
+	const float width = std::min(430.0f, screen.w * 0.42f);
 	const float pad = 28.0f;
-	const float rowHeight = 44.0f;
+	const float inner = width - pad * 2.0f;
+	const float rowHeight = 48.0f;
+	const float rowGap = 6.0f;
 
 	ui->FillRect(UI::Drawable(psp5::kShade), Bounds(width, 0.0f, screen.w - width, screen.h));
-	ui->FillRect(UI::Drawable(psp5::kPanel), Bounds(0.0f, 0.0f, width, screen.h));
-	ui->FillRect(UI::Drawable(psp5::kAccent), Bounds(width - 3.0f, 0.0f, 3.0f, screen.h));
+	ui->FillRect(UI::Drawable(psp5::kPage), Bounds(0.0f, 0.0f, width, screen.h));
+	// A hairline, not a bar of colour: this theme separates with a rule.
+	ui->FillRect(UI::Drawable(psp5::kOutline), Bounds(width - 1.0f, 0.0f, 1.0f, screen.h));
 
+	// ---- the head ----
 	ui->SetFontStyle(ui->GetTheme().uiFont);
-	ui->SetFontScale(1.05f, 1.05f);
-	ui->DrawText(psp5::PageTitle(), pad, pad + 6.0f, psp5::kAccent, ALIGN_LEFT | ALIGN_TOP);
-	ui->SetFontScale(0.68f, 0.68f);
-	ui->DrawText(psp5::g_page == psp5::Page::root ? "L1 + L3 closes" : "Circle goes back", pad,
-	             pad + 42.0f, psp5::kInkDim, ALIGN_LEFT | ALIGN_TOP);
+	ui->SetFontScale(1.0f, 1.0f);
+	ui->DrawText(psp5::PageTitle(), pad, pad + 2.0f, psp5::kInk, ALIGN_LEFT | ALIGN_TOP);
+	ui->SetFontScale(0.6f, 0.6f);
+	ui->DrawText(psp5::g_page == psp5::Page::root ? "L1 + L3  CLOSE" : "CIRCLE  BACK", pad,
+	             pad + 36.0f, psp5::kInkFaint, ALIGN_LEFT | ALIGN_TOP);
+	ui->FillRect(UI::Drawable(psp5::kOutline), Bounds(pad, pad + 60.0f, inner, 1.0f));
 
-	const float top = pad + 78.0f;
+	const float top = pad + 80.0f;
 	const int rows = (int)psp5::g_rows.size();
-	const int visible = std::max(1, (int)((screen.h - top - pad) / rowHeight));
+	const int visible = std::max(1, (int)((screen.h - top - pad) / (rowHeight + rowGap)));
 	int first = std::clamp(psp5::g_row - visible / 2, 0, std::max(0, rows - visible));
 	const int last = std::min(rows, first + visible);
 
@@ -404,30 +393,50 @@ extern "C" void PS5_DrawOverlays(UIContext *ui) {
 	for (int i = first; i < last; ++i) {
 		const auto &row = psp5::g_rows[(std::size_t)i];
 		const bool focused = i == psp5::g_row;
+		const Bounds card(pad, y, inner, rowHeight);
 
-		if (focused) {
-			ui->FillRect(UI::Drawable(0x26FFFFFF), Bounds(0.0f, y, width - 3.0f, rowHeight));
-			ui->FillRect(UI::Drawable(psp5::kAccent), Bounds(0.0f, y, 4.0f, rowHeight));
+		if (row.kind == psp5::Kind::note) {
+			// Not a row to land on: said quietly, with no card behind it.
+			ui->SetFontScale(0.64f, 0.64f);
+			ui->DrawTextRect(row.label, Bounds(pad + 2.0f, y, inner - 4.0f, rowHeight),
+			                 psp5::kInkFaint, ALIGN_LEFT | ALIGN_VCENTER);
+			y += rowHeight + rowGap;
+			continue;
 		}
 
-		const uint32_t ink =
-		    !row.selectable ? psp5::kInkFaint : (focused ? psp5::kInk : psp5::kInkDim);
-		ui->SetFontScale(0.8f, 0.8f);
-		const float right = row.toggle ? 46.0f + pad : 86.0f;
-		ui->DrawTextRect(row.label, Bounds(pad, y, width - pad - right, rowHeight), ink,
-		                 ALIGN_LEFT | ALIGN_VCENTER);
+		// Every row is a card with a hairline, so the list reads as a set of
+		// things rather than as text with a highlight wandering over it. Focus
+		// is the blue edge, as this theme does it.
+		psp5::FillRoundOutlined(ui, card, psp5::kRadius,
+		                        focused ? psp5::kSurfaceHigh : psp5::kSurface,
+		                        focused ? psp5::kAccent : psp5::kOutline, focused ? 2.0f : 1.0f);
 
+		const float textLeft = card.x + 18.0f;
+		float textRight = card.x + card.w - 16.0f;
 		if (row.toggle) {
-			DrawToggle(ui, width - pad - 46.0f, y + (rowHeight - 24.0f) * 0.5f, row.on);
+			psp5::DrawToggle(ui, card.x + card.w - 16.0f - 50.0f,
+			                 card.y + (rowHeight - 26.0f) * 0.5f, row.on);
+			textRight -= 62.0f;
 		} else if (row.submenu) {
-			DrawChevron(ui, width - pad - 10.0f, y + rowHeight * 0.5f, ink);
+			ui->SetFontScale(0.74f, 0.74f);
+			ui->DrawTextRect(">", Bounds(card.x + card.w - 30.0f, card.y, 18.0f, rowHeight),
+			                 focused ? psp5::kInk : psp5::kInkFaint, ALIGN_LEFT | ALIGN_VCENTER);
+			textRight -= 24.0f;
 		}
+
 		if (!row.value.empty()) {
-			const float valueRight = row.submenu ? pad + 26.0f : pad;
-			ui->DrawTextRect(row.value, Bounds(width - valueRight - 90.0f, y, 90.0f, rowHeight),
-			                 focused ? psp5::kAccent : psp5::kInkDim, ALIGN_RIGHT | ALIGN_VCENTER);
+			ui->SetFontScale(0.64f, 0.64f);
+			const float w = 86.0f;
+			ui->DrawTextRect(row.value, Bounds(textRight - w, card.y, w, rowHeight),
+			                 psp5::kInkDim, ALIGN_RIGHT | ALIGN_VCENTER);
+			textRight -= w + 10.0f;
 		}
-		y += rowHeight;
+
+		ui->SetFontScale(0.76f, 0.76f);
+		ui->DrawTextRect(row.label, Bounds(textLeft, card.y, textRight - textLeft, rowHeight),
+		                 row.selectable ? psp5::kInk : psp5::kInkFaint,
+		                 ALIGN_LEFT | ALIGN_VCENTER);
+		y += rowHeight + rowGap;
 	}
 
 	ui->SetFontScale(1.0f, 1.0f);

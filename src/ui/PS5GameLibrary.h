@@ -30,6 +30,9 @@ struct GameEntry {
 	int year = 0;
 	bool has_art = false; // the game carried its own ICON0; the cover is not drawn
 	bool favorite = false;
+	// SND0.AT3 as it sits on the disc. Encoded, because decoded a three minute
+	// loop is forty megabytes and the shelf would hold one per game.
+	std::string sound;
 };
 
 // How the shelf is ordered. These are the home screen's tabs, switched with
@@ -64,6 +67,9 @@ public:
 	const hui::demo::Item &item(std::size_t index) const { return items_[index]; }
 	const GameEntry &entry(std::size_t index) const { return entries_[index]; }
 
+	// The game's menu loop, still encoded, or empty if it carries none.
+	const std::string &sound(std::size_t index) const { return entries_[index].sound; }
+
 	// Indices into items(), in this view's order. The favorites view holds only
 	// the games marked as such, so it can be empty while the others are not.
 	std::span<const int> order(GameView view) const {
@@ -78,6 +84,7 @@ public:
 	// Covers are GPU textures; a memory stick with hundreds of games would
 	// otherwise spend a gigabyte of them before the first frame.
 	static constexpr std::size_t kMaxGames = 128;
+	static constexpr std::size_t kMaxSoundBytes = 2u * 1024u * 1024u;
 	static constexpr int kCoverSize = 512;
 
 private:

@@ -19,6 +19,7 @@
 
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
+#include "Core/RetroAchievements.h"
 
 #include "PS5Log.h"
 
@@ -82,6 +83,58 @@ Settings &SettingsPanel() {
 	return panel;
 }
 
+bool MenuSoundsEnabled() {
+	return g_Config.iUIVolume > 0;
+}
+
+bool AchievementsLoggedIn() {
+	return Achievements::IsLoggedIn();
+}
+
+std::string AchievementsUser() {
+	return g_Config.sAchievementsUserName;
+}
+
+bool AchievementsAvailable() {
+#ifdef HTTPS_NOT_AVAILABLE
+	// RetroAchievements' API is HTTPS only, and PPSSPP's HTTPS is naett, whose
+	// backends are WinHTTP, NSURLSession, libcurl and Java - none of which exist
+	// on a console. PPSSPP's own CMakeLists sets HTTPS_NOT_AVAILABLE for every
+	// platform that is not Windows, Apple or Android, and with it an https
+	// request returns a null handle and is never sent.
+	//
+	// The console has libSceHttp, libSceHttp2, libSceSsl and libSceNet, so this
+	// is reachable - it needs a transport written against them. Until then the
+	// panel says so rather than taking a password and losing it.
+	return false;
+#else
+	return true;
+#endif
+}
+
+void AchievementsLogin(const std::string &user, const std::string &password) {
+	if (user.empty() || password.empty()) {
+		return;
+	}
+	if (!AchievementsAvailable()) {
+		psp5::Trace("achievements: no HTTPS transport in this build; sign-in not sent");
+		return;
+	}
+	// Turning the system on is part of signing in: a login against a disabled
+	// client would succeed and then do nothing.
+	g_Config.bAchievementsEnable = true;
+	Achievements::UpdateSettings();
+	psp5::Trace("achievements: signing in as %s", user.c_str());
+	Achievements::LoginAsync(user.c_str(), password.c_str());
+	g_Config.Save("psp5 achievements");
+}
+
+void AchievementsLogout() {
+	Achievements::Logout();
+	g_Config.Save("psp5 achievements");
+	psp5::Trace("achievements: signed out");
+}
+
 void Settings::Rebuild() {
 	items_.clear();
 
@@ -108,12 +161,12 @@ void Settings::Rebuild() {
 	items_.push_back({"Game volume", Format("%d", g_Config.iGameVolume),
 	                  "0 to 100, in steps of five."});
 
+	items_.push_back({"Menu sounds", MenuSoundsEnabled() ? "On" : "Off",
+	                  "The home screen's own sounds. A game's music is separate."});
+
 	items_.push_back({"Show frame rate",
 	                  (g_Config.iShowStatusFlags & (int)ShowStatusFlags::FPS_COUNTER) ? "On" : "Off",
 	                  "Draws the frame rate over the game."});
-
-	items_.push_back({"Cheats", g_Config.bEnableCheats ? "On" : "Off",
-	                  "Applies the codes in memstick/PSP/Cheats for the game being played."});
 
 	items_.push_back({"Fast-forward speed",
 	                  g_Config.iAnalogFpsLimit <= 0 ? std::string("Unlimited")
@@ -122,6 +175,63 @@ void Settings::Rebuild() {
 }
 
 void Settings::Reload() {
+	dirty_ = false;
+	Rebuild();
+}
+
+void Settings::BeginGame(const std::string &discId, const std::string &title) {
+	EndGame();
+	if (discId.empty()) {
+		// Homebrew with no DISC_ID: PPSSPP keys its per-game ini on that id, so
+		// there is nothing to key one on here either.
+		return;
+	}
+	gameId_ = discId;
+	gameTitle_ = title;
+	overrides_ = g_Config.HasGameConfig(gameId_);
+	if (overrides_) {
+		g_Config.LoadGameConfig(gameId_);
+	}
+	dirty_ = false;
+	Rebuild();
+}
+
+void Settings::SetOverrides(bool on) {
+	if (gameId_.empty() || on == overrides_) {
+		return;
+	}
+	if (on) {
+		g_Config.CreateGameConfig(gameId_);
+		g_Config.LoadGameConfig(gameId_);
+		overrides_ = true;
+		dirty_ = true;
+	} else {
+		// Leave the mode before the file goes, so the settings in memory go back
+		// to the global ones rather than keeping the game's last values.
+		if (g_Config.IsGameSpecific()) {
+			g_Config.UnloadGameConfig();
+		}
+		g_Config.DeleteGameConfig(gameId_);
+		overrides_ = false;
+		dirty_ = false;
+	}
+	Rebuild();
+}
+
+void Settings::EndGame() {
+	if (gameId_.empty()) {
+		return;
+	}
+	if (g_Config.IsGameSpecific()) {
+		if (dirty_) {
+			g_Config.SaveGameConfig(gameId_, gameTitle_);
+			psp5::Trace("settings: saved for %s", gameId_.c_str());
+		}
+		g_Config.UnloadGameConfig();
+	}
+	gameId_.clear();
+	gameTitle_.clear();
+	overrides_ = false;
 	dirty_ = false;
 	Rebuild();
 }
@@ -165,10 +275,12 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			g_Config.iGameVolume = std::clamp(g_Config.iGameVolume + delta * 5, 0, VOLUMEHI_FULL);
 			break;
 		case 7:
-			g_Config.iShowStatusFlags ^= (int)ShowStatusFlags::FPS_COUNTER;
+			// Off is silence; on is the volume PPSSPP ships with, since psp5
+			// offers no slider for it.
+			g_Config.iUIVolume = MenuSoundsEnabled() ? 0 : VOLUMEHI_FULL;
 			break;
 		case 8:
-			g_Config.bEnableCheats = !g_Config.bEnableCheats;
+			g_Config.iShowStatusFlags ^= (int)ShowStatusFlags::FPS_COUNTER;
 			break;
 		case 9: {
 			// 0 means unlimited, and it sits past the top of the range rather
@@ -194,6 +306,12 @@ bool Settings::Adjust(std::size_t index, int delta) {
 
 void Settings::Save() {
 	if (!dirty_) {
+		return;
+	}
+	// A game's settings are written by EndGame, which also has to leave the mode
+	// they are written in; saving the global ini here would write the game's
+	// values into it.
+	if (scopedToGame()) {
 		return;
 	}
 	g_Config.Save("psp5 settings");

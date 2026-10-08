@@ -107,6 +107,7 @@ bool LoadFromIso(FileLoader *loader, const char *root, GameArt *out) {
 	if (ReadFromFileSystem(&umd, prefix + "PIC1.PNG", &bytes)) {
 		DecodePng(bytes, &out->background);
 	}
+	ReadFromFileSystem(&umd, prefix + "SND0.AT3", &out->sound);
 	return true;
 }
 
@@ -127,6 +128,9 @@ bool LoadFromPbp(FileLoader *loader, GameArt *out) {
 	if (pbp.GetSubFileSize(PBP_PIC1_PNG) > 0) {
 		pbp.GetSubFileAsString(PBP_PIC1_PNG, &bytes);
 		DecodePng(bytes, &out->background);
+	}
+	if (pbp.GetSubFileSize(PBP_SND0_AT3) > 0) {
+		pbp.GetSubFileAsString(PBP_SND0_AT3, &out->sound);
 	}
 	return true;
 }

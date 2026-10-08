@@ -25,13 +25,22 @@
 #include "concepts/concepts.hpp"
 #include "core/input.hpp"
 #include "core/settings.hpp"
+#include "audio/cues.hpp"
+#include "audio/mixer.hpp"
 #include "ui/feedback.hpp"
 #include "demo/catalog.hpp"
 
 #include "PS5GameLibrary.h"
+#include "PS5GameSound.h"
+#include "PS5Settings.h"
+
+// Defined by PPSSPP (patches/ppsspp/ps5-standalone.patch).
+extern "C" void PS5_PumpNetwork();
 #include "gfx/font.hpp"
 #include "gfx/vk/vk_renderer.hpp"
 #include "ui/fonts.hpp"
+
+#include <cstring>
 
 #include "PS5Log.h"
 #include "PS5Paths.h"
@@ -44,8 +53,28 @@ extern "C" PFN_vkVoidFunction radv_GetInstanceProcAddr(VkInstance instance, cons
 namespace psp5 {
 namespace {
 
-// The kit's fonts, staged beside the title's other assets by tools/link-title.sh.
+// The kit's fonts and sounds, staged beside the title's other assets by
+// tools/link-title.sh.
 const char *const kFontDir = "/app0/ui/fonts";
+const char *const kSoundDir = "/app0/ui/sfx";
+
+// Aurora's sound set. The kit records two; a cue the set does not have falls
+// back to the other, and then to a synthesised tone.
+constexpr hui::audio::SoundSet kSoundSet = hui::audio::SoundSet::glass;
+
+// The mixer renders on the console's audio thread and is posted to from the
+// frame loop, which is what it is built for: play_clip is the game-thread side
+// and render is the audio-thread side.
+hui::audio::Mixer *g_mixer = nullptr;
+
+void FillAudio(std::int16_t *frames, int count, void *user) {
+	auto *mixer = static_cast<hui::audio::Mixer *>(user);
+	if (mixer) {
+		mixer->render(frames, count);
+	} else {
+		std::memset(frames, 0, (std::size_t)count * 2 * sizeof(std::int16_t));
+	}
+}
 
 bool ReadWholeFile(const std::string &path, std::string *out) {
 	FILE *fh = fopen(path.c_str(), "rb");
@@ -414,6 +443,30 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 
 	psp5::Trace("ui: Aurora Shelf at %dx%d", surface.width(), surface.height());
 
+	// Sound. Not fatal if any of it fails: the shelf is silent, which is what it
+	// was before, rather than not drawing.
+	hui::audio::Mixer mixer;
+	hui::audio::SoundBank bank;
+	const hui::audio::SoundBank::Stats sounds = bank.load(kSoundDir);
+	psp5::Trace("ui: %d sound(s) from %s%s", sounds.files, kSoundDir,
+	            sounds.rejected ? " (some rejected)" : "");
+	g_mixer = &mixer;
+	const bool audio = audio_start(&FillAudio, &mixer);
+	if (!audio) {
+		psp5::Trace("ui: no audio device; the shelf is silent");
+	}
+	// Which game is under the cursor is the shelf's to say, not this loop's: the
+	// first item of the Recent view is not entry zero, and priming it from here
+	// played one game's music under another's name until the cursor moved.
+	GameSoundPlayer().Attach(mixer);
+
+	// The pad is almost certainly mid-press when this starts: the player just
+	// confirmed Exit game, and that Cross is still down. A fresh InputTracker
+	// has held_ = 0, so its first frame reads every held button as newly
+	// pressed - which opened the focused game's details the moment the shelf
+	// came back. Nothing is acted on until the pad has been seen at rest.
+	bool settled = false;
+
 	hui::InputTracker tracker;
 	hui::PadSample samples[64];
 	double previous = now_seconds();
@@ -446,8 +499,33 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 			break;
 		}
 
+		if (!settled) {
+			if (input.held == 0) {
+				settled = true;
+			}
+			// Neutral rather than skipped: the screen still breathes, it just
+			// does not answer anything.
+			const bool connected = input.connected;
+			input = hui::InputFrame{};
+			input.connected = connected;
+		}
+
 		hui::ui::Feedback feedback;
 		aurora->update(input, dt, feedback);
+
+		// What the screen asked for this frame. The kit collects these and
+		// leaves playing them to whoever owns the loop - which is here.
+		// The game's own music is not one of these, so switching the menu's
+		// sounds off leaves it playing.
+		if (psp5::MenuSoundsEnabled()) {
+			for (const hui::audio::CueEvent &cue : feedback.cues) {
+				bank.play(mixer, kSoundSet, cue);
+			}
+		}
+		GameSoundPlayer().Update(mixer, dt);
+		// Nothing else does while the shelf is up: PPSSPP's own loop, which
+		// carries this queue, only runs inside a game.
+		PS5_PumpNetwork();
 
 		hui::app::Frame frame;
 		aurora->draw(frame);
@@ -490,6 +568,14 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 		frames++;
 		slot = (slot + 1) % surface.framesInFlight();
 	}
+
+	// Before the device goes: the audio thread is reading the mixer until it
+	// stops, and the mixer and the sound player's ring are about to leave scope.
+	if (audio) {
+		audio_stop();
+	}
+	GameSoundPlayer().Detach(mixer);
+	g_mixer = nullptr;
 
 	psp5::Trace("ui: leaving the home screen");
 	Library().Release(renderer);

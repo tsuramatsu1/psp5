@@ -39,6 +39,8 @@
 #include "PS5Paths.h"
 #include "ui/PS5AuroraLauncher.h"
 #include "ui/PS5GameLibrary.h"
+#include "ui/PS5GameSound.h"
+#include "ui/PS5Keyboard.h"
 #include "ui/PS5Cheats.h"
 #include "ui/PS5Settings.h"
 
@@ -65,6 +67,9 @@ constexpr float kCardGrow = 1.2f;     // focused card scale
 constexpr int kViews = static_cast<int>(psp5::GameView::count); // tabs along the top
 // The last row of the settings panel, which is not a setting.
 const std::string kQuitLabel = "Close psp5";
+const std::string kCheatsEnabledLabel = "Cheats enabled";
+const std::string kOverridesLabel = "Settings for this game";
+const std::string kAchievementsLabel = "RetroAchievements";
 constexpr float kShelfY = 730.0f;     // top of the focused shelf's cards
 constexpr float kShelfPitch = 304.0f; // distance between shelves
 constexpr int kActions = 3;
@@ -108,6 +113,9 @@ class Aurora final : public app::Concept
         {
             shown_ = previous_ = focused_item();
             apply_palette(true);
+            // The opening selection, which is otherwise never announced: the
+            // report below only fires when the focus changes.
+            psp5::GameSoundPlayer().Focus(static_cast<std::size_t>(shown_));
         }
         ring_.snap(card_rect(0, 0, true));
     }
@@ -140,6 +148,16 @@ class Aurora final : public app::Concept
         // that depends on there being a game to focus. Not while the details
         // sheet is up, though: there L1/R1 would move the screen out from under
         // an open panel.
+        // The keyboard is over everything and has the pad to itself: a press
+        // that typed a letter must not also move the shelf behind it.
+        if (psp5::KeyboardPanel().open())
+        {
+            bool accepted = false;
+            if (psp5::KeyboardPanel().Update(input, feedback, &accepted))
+                finish_typing(accepted);
+            return;
+        }
+
         // OPTIONS is the settings, from anywhere on the home screen. It is a
         // console's button for this, and it leaves the face buttons to the shelf.
         if (input.is_pressed(Action::menu))
@@ -169,6 +187,9 @@ class Aurora final : public app::Concept
         {
             previous_ = shown_;
             shown_ = focused_item();
+            // The game under the cursor plays its own menu loop, as it would on
+            // a PSP. The player waits for the cursor to settle before starting.
+            psp5::GameSoundPlayer().Focus(static_cast<std::size_t>(shown_));
             hero_.start(context_.settings.reduced_motion ? 0.12f : 0.42f);
             apply_palette(false);
         }
@@ -220,13 +241,15 @@ class Aurora final : public app::Concept
             draw_shelves(list);
         }
         list.pop_transform();
+        psp5::KeyboardPanel().Draw(list, context_.fonts, palette_[3].value());
         if (back > 0.01f)
             list.rounded_rect({0, 0, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0,
                               Color::rgb(0x05070f, 0.45f * back));
 
         if (back > 0.01f)
         {
-            frame.glass = true;
+            // No glass capture: the panel is opaque, and capturing the screen
+            // for a blur nothing draws is a copy of the whole frame wasted.
             draw_sheet(frame.overlay, frame.glass_texture);
         }
         draw_hints(back > 0.5f ? frame.overlay : frame.scene);
@@ -339,40 +362,115 @@ class Aurora final : public app::Concept
         return true;
     }
 
-    void toggle_settings(app::Feedback &feedback)
+    void open_settings(app::Feedback &feedback)
     {
-        settings_open_ = !settings_open_;
-        if (settings_open_)
-        {
-            setting_ = 0;
-            psp5::SettingsPanel().Reload();
-            feedback.play(audio::Cue::open);
-            return;
-        }
-        // Written once, on the way out, rather than on every keypress: PPSSPP's
-        // save rewrites the whole ini.
-        if (psp5::SettingsPanel().dirty())
-        {
-            psp5::SettingsPanel().Save();
-            feedback.play(audio::Cue::saved);
-        }
-        else
-        {
-            feedback.play(audio::Cue::back);
-        }
+        settings_open_ = true;
+        setting_ = 0;
+        psp5::SettingsPanel().Reload();
+        feedback.play(audio::Cue::open);
     }
 
-    // The settings, and one row past them: closing the title. That row is here
-    // rather than on a gesture of its own because OPTIONS now opens this panel,
-    // and the foot of a settings list is where someone looks for a way out.
+    void close_settings(app::Feedback &feedback)
+    {
+        settings_open_ = false;
+        // Written once, on the way out, rather than on every keypress: PPSSPP's
+        // save rewrites the whole ini.
+        const bool changed = psp5::SettingsPanel().dirty();
+        if (changed)
+            psp5::SettingsPanel().Save();
+        // Always, even when nothing changed: this is what leaves PPSSPP's
+        // game-specific mode, and a panel that left it set would make the next
+        // global edit land in the game's file.
+        psp5::SettingsPanel().EndGame();
+        feedback.play(changed ? audio::Cue::saved : audio::Cue::back);
+    }
+
+    void toggle_settings(app::Feedback &feedback)
+    {
+        if (settings_open_)
+        {
+            close_settings(feedback);
+            return;
+        }
+        // OPTIONS is the whole title's settings, so any game scope is dropped.
+        psp5::SettingsPanel().EndGame();
+        open_settings(feedback);
+    }
+
+    // Scoped to a game, the first row is the switch that says whether the game
+    // has settings of its own. Otherwise the last row closes the title: OPTIONS
+    // opens this panel, and the foot of a settings list is where someone looks
+    // for a way out.
+    bool game_scoped() const
+    {
+        return psp5::SettingsPanel().scopedToGame();
+    }
+
     int settings_rows() const
     {
-        return static_cast<int>(psp5::SettingsPanel().size()) + 1;
+        // The settings, then RetroAchievements and Close psp5 - unless this is
+        // one game's panel, which has neither and the override switch instead.
+        return static_cast<int>(psp5::SettingsPanel().size()) + (game_scoped() ? 1 : 2);
+    }
+
+    bool override_row(int row) const
+    {
+        return game_scoped() && row == 0;
     }
 
     bool quit_row(int row) const
     {
-        return row == settings_rows() - 1;
+        return !game_scoped() && row == settings_rows() - 1;
+    }
+
+    // One row above Close psp5, and only on the title's own settings: an
+    // account belongs to the player, not to a game.
+    bool achievements_row(int row) const
+    {
+        return !game_scoped() && row == settings_rows() - 2;
+    }
+
+    // Which setting a row shows, or -1 when the row is not one.
+    int setting_at(int row) const
+    {
+        if (quit_row(row) || achievements_row(row) || override_row(row))
+            return -1;
+        const int index = game_scoped() ? row - 1 : row;
+        return index >= 0 && index < static_cast<int>(psp5::SettingsPanel().size()) ? index : -1;
+    }
+
+    // Signing in takes two answers, so the keyboard is opened twice and this
+    // says which one came back.
+    enum class Typing
+    {
+        none,
+        achievement_user,
+        achievement_password,
+    };
+
+    void finish_typing(bool accepted)
+    {
+        const Typing was = typing_;
+        typing_ = Typing::none;
+        if (!accepted)
+        {
+            typed_user_.clear();
+            return;
+        }
+        if (was == Typing::achievement_user)
+        {
+            typed_user_ = psp5::KeyboardPanel().text();
+            if (typed_user_.empty())
+                return;
+            typing_ = Typing::achievement_password;
+            psp5::KeyboardPanel().Open("RETROACHIEVEMENTS", "Password", "", true);
+            return;
+        }
+        if (was == Typing::achievement_password)
+        {
+            psp5::AchievementsLogin(typed_user_, psp5::KeyboardPanel().text());
+            typed_user_.clear();
+        }
     }
 
     void update_settings(const InputFrame &input, app::Feedback &feedback)
@@ -387,19 +485,13 @@ class Aurora final : public app::Concept
 
         if (input.nav == Direction::up || input.nav == Direction::down)
         {
-            const int next = std::clamp(setting_ + (input.nav == Direction::down ? 1 : -1), 0,
-                                        count - 1);
-            if (next != setting_)
-            {
-                setting_ = next;
-                feedback.play(audio::Cue::focus, 1.0f, 0.0f);
-            }
-            else
-            {
-                feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
-                nudge_direction_ = 0.0f;
-                nudge_.trigger();
-            }
+            // Wrapping, not stopping. This is a short closed list and the row
+            // most often wanted from the top of it - Close psp5 - is the last
+            // one, so refusing the step up put it furthest from where the
+            // cursor starts.
+            const int step = input.nav == Direction::down ? 1 : count - 1;
+            setting_ = (setting_ + step) % count;
+            feedback.play(audio::Cue::focus, 1.0f, 0.0f);
         }
 
         if (quit_row(setting_))
@@ -414,6 +506,51 @@ class Aurora final : public app::Concept
             return;
         }
 
+        if (achievements_row(setting_))
+        {
+            if (input.is_pressed(Action::confirm))
+            {
+                if (!psp5::AchievementsAvailable())
+                {
+                    feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
+                }
+                else if (psp5::AchievementsLoggedIn())
+                {
+                    psp5::AchievementsLogout();
+                    feedback.play(audio::Cue::back);
+                }
+                else
+                {
+                    typing_ = Typing::achievement_user;
+                    psp5::KeyboardPanel().Open("RETROACHIEVEMENTS", "Username",
+                                               psp5::AchievementsUser(), false);
+                    feedback.play(audio::Cue::open);
+                }
+            }
+            return;
+        }
+
+        if (override_row(setting_))
+        {
+            if (input.nav == Direction::left || input.nav == Direction::right ||
+                input.is_pressed(Action::confirm))
+            {
+                settings.SetOverrides(!settings.overrides());
+                feedback.play(audio::Cue::toggle, 1.0f, 0.0f);
+            }
+            return;
+        }
+
+        // With no settings of its own, the rows below show the global ones and
+        // are not this game's to change.
+        if (game_scoped() && !settings.overrides())
+        {
+            if (input.nav == Direction::left || input.nav == Direction::right ||
+                input.is_pressed(Action::confirm))
+                feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
+            return;
+        }
+
         // Left and right change the focused setting; Cross does the same as
         // right, because a row that is only on or off reads as something to
         // press rather than something to scroll.
@@ -424,7 +561,7 @@ class Aurora final : public app::Concept
             delta = -1;
         if (delta != 0)
         {
-            if (settings.Adjust(static_cast<std::size_t>(setting_), delta))
+            if (settings.Adjust(static_cast<std::size_t>(setting_at(setting_)), delta))
                 feedback.play(audio::Cue::toggle, 1.0f, 0.0f);
             else
                 feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.6f);
@@ -492,27 +629,32 @@ class Aurora final : public app::Concept
         }
         if (input.is_pressed(Action::north))
             toggle_favorite(feedback);
+        if (input.is_pressed(Action::west) && !empty())
+        {
+            // The same panel, scoped to this game. OPTIONS opens it for the
+            // whole title; Square opens it for what is under the cursor.
+            psp5::SettingsPanel().BeginGame(entry(focused_item()).disc_id,
+                                            item(focused_item()).title);
+            open_settings(feedback);
+        }
     }
 
     void update_cheats(const InputFrame &input, app::Feedback &feedback)
     {
         psp5::Cheats &cheats = psp5::CheatList();
-        const int count = static_cast<int>(cheats.size());
-        if (input.is_pressed(Action::back) || count == 0)
+        // The master switch is the first row, and it is there whether or not the
+        // game has a cheat file: without it on, the codes below are read and
+        // ignored, so this is where it belongs.
+        const int count = cheat_rows();
+
+        if (input.is_pressed(Action::back))
         {
-            if (input.is_pressed(Action::back))
-            {
-                if (cheats.dirty())
-                {
-                    cheats.Save();
-                    feedback.play(audio::Cue::saved);
-                }
-                else
-                {
-                    feedback.play(audio::Cue::back);
-                }
-                cheats_open_ = false;
-            }
+            const bool changed = cheats.dirty();
+            if (changed)
+                cheats.Save();
+            psp5::SaveCheatsEnabled();
+            feedback.play(changed ? audio::Cue::saved : audio::Cue::back);
+            cheats_open_ = false;
             return;
         }
 
@@ -528,7 +670,15 @@ class Aurora final : public app::Concept
         }
         if (input.is_pressed(Action::confirm))
         {
-            cheats.Toggle(static_cast<std::size_t>(cheat_));
+            if (cheat_ == 0)
+            {
+                psp5::SetCheatsEnabled(!psp5::CheatsEnabled());
+                cheat_ = 0;
+            }
+            else
+            {
+                cheats.Toggle(static_cast<std::size_t>(cheat_ - 1));
+            }
             feedback.play(audio::Cue::toggle);
         }
     }
@@ -569,7 +719,7 @@ class Aurora final : public app::Concept
                 // built: it is one small file, and reading it on the way in
                 // means a file copied since the title started is still found.
                 psp5::CheatList().Load(entry(focused_item()).disc_id);
-                cheat_ = 0;
+                cheat_ = 0;  // the master switch
                 cheats_open_ = true;
                 feedback.play(audio::Cue::open);
             }
@@ -613,8 +763,14 @@ class Aurora final : public app::Concept
         const float y = 92 - 10 * (1.0f - in);
         list.push_opacity(in);
 
-        ui::draw_button(list, fonts, style, ui::Button::l1, kMargin + 16, y - 9, 30);
-        float x = kMargin + 56;
+        // A shoulder glyph is far wider than it is tall, so the gap after it is
+        // measured rather than guessed - at 30 high the L1 cap ran under the
+        // first tab's text.
+        constexpr float kGlyph = 30.0f;
+        constexpr float kGlyphGap = 18.0f;
+        float x = kMargin;
+        ui::draw_button(list, fonts, style, ui::Button::l1, x, y - 9, kGlyph);
+        x += ui::button_width(ui::Button::l1, kGlyph) + kGlyphGap;
         for (int i = 0; i < kViews; ++i)
         {
             const bool active = i == static_cast<int>(view_);
@@ -625,7 +781,7 @@ class Aurora final : public app::Concept
                 list.rounded_rect({x, 104, w, 4}, 2, palette_[3].value());
             x += w + 44;
         }
-        ui::draw_button(list, fonts, style, ui::Button::r1, x - 10, y - 9, 30);
+        ui::draw_button(list, fonts, style, ui::Button::r1, x - 44 + kGlyphGap, y - 9, kGlyph);
 
         // Where the clock and the account avatar were. A count of what is on the
         // stick is the one fact this screen can actually state.
@@ -648,13 +804,22 @@ class Aurora final : public app::Concept
 
         const float in = tween::stagger(age_, 1, 0.08f, 0.5f);
         list.push_opacity(in);
-        ui::text(list, fonts.display, "Settings", kMargin, 190 - 20 * (1.0f - in), 64, kWhite);
+        ui::text(list, fonts.display,
+                 game_scoped() ? psp5::SettingsPanel().gameTitle() : std::string("Settings"),
+                 kMargin, 190 - 20 * (1.0f - in), 64, kWhite);
         // The focused row's explanation, in the one fixed place: under the title
         // rather than under the list, which would be past the foot of the screen
         // once every row is on it.
-        const char *hint = quit_row(setting_)
-                               ? "Closes psp5 and returns to the console."
-                               : rows[static_cast<std::size_t>(setting_)].hint.c_str();
+        const int at = setting_at(setting_);
+        const char *hint =
+            quit_row(setting_)           ? "Closes psp5 and returns to the console."
+            : achievements_row(setting_)
+                ? (psp5::AchievementsAvailable()
+                       ? "Signs in so games award achievements as you play."
+                       : "This build has no HTTPS transport, so it cannot reach the server.")
+            : override_row(setting_)     ? "Keeps a separate set of settings for this game."
+            : at >= 0                    ? rows[static_cast<std::size_t>(at)].hint.c_str()
+                                         : "";
         ui::text(list, fonts.regular, hint, kMargin, 243, 25, kWhite.with_alpha(0.7f));
         list.pop_opacity();
 
@@ -678,14 +843,35 @@ class Aurora final : public app::Concept
                 list.rounded_rect({rect.x + shake, rect.y + 10, 5, rect.h - 20}, 3,
                                   palette_[3].value());
             }
-            const std::string &label =
-                quit ? kQuitLabel : rows[static_cast<std::size_t>(i)].label;
+            const int row_setting = setting_at(i);
+            const bool overrides = override_row(i);
+            // Dimmed where the row shows a global value this panel will not
+            // change, so the panel never looks like it took an edit it refused.
+            const bool live = !game_scoped() || overrides || psp5::SettingsPanel().overrides();
+            const bool achievements = achievements_row(i);
+            const std::string &label = quit           ? kQuitLabel
+                                       : achievements ? kAchievementsLabel
+                                       : overrides    ? kOverridesLabel
+                                                      : rows[static_cast<std::size_t>(row_setting)].label;
             ui::text(list, focused ? fonts.semibold : fonts.regular, label, rect.x + 30 + shake,
-                     rect.y + 34, 26, kWhite.with_alpha(focused ? 1.0f : 0.72f));
-            if (!quit)
-                ui::text(list, fonts.semibold, rows[static_cast<std::size_t>(i)].value,
+                     rect.y + 34, 26,
+                     kWhite.with_alpha(!live ? 0.4f : (focused ? 1.0f : 0.72f)));
+            if (overrides)
+                draw_toggle(list, rect.x + rect.w - 86 + shake, rect.y + 7,
+                            psp5::SettingsPanel().overrides());
+            else if (achievements)
+                ui::text(list, fonts.semibold,
+                         !psp5::AchievementsAvailable() ? std::string("Needs HTTPS")
+                         : psp5::AchievementsLoggedIn() ? psp5::AchievementsUser()
+                                                        : std::string("Not signed in"),
                          rect.x + rect.w - 30 + shake, rect.y + 34, 26,
                          focused ? palette_[3].value() : kWhite.with_alpha(0.6f),
+                         gfx::Align::right);
+            else if (!quit)
+                ui::text(list, fonts.semibold, rows[static_cast<std::size_t>(row_setting)].value,
+                         rect.x + rect.w - 30 + shake, rect.y + 34, 26,
+                         !live ? kWhite.with_alpha(0.35f)
+                               : (focused ? palette_[3].value() : kWhite.with_alpha(0.6f)),
                          gfx::Align::right);
             list.pop_opacity();
         }
@@ -869,10 +1055,11 @@ class Aurora final : public app::Concept
                          1680, kHeight};
         list.push_opacity(tween::clamp01(t * 1.4f));
         list.shadow({sheet.x, sheet.y + 20, sheet.w, sheet.h}, 44, 60, Color::rgb(0x000000, 0.5f));
-        // Frosted panel: the blurred screen, a tint, then a hairline of light.
-        list.glass(glass, sheet, 44, kWhite);
-        list.rounded_rect(sheet, 44,
-                          gfx::mix(it.dark, Color::rgb(0x0b0d16), 0.5f).with_alpha(0.62f));
+        // Solid, not frosted. The kit's glass shows the shelf through the panel,
+        // and over a cover's own artwork the text on it had to compete with the
+        // picture it was describing.
+        (void)glass;
+        list.rounded_rect(sheet, 44, Color::rgb(0x000000));
         list.bordered_rect(sheet, 44, Color::rgb(0x000000, 0.0f), 1.5f, kWhite.with_alpha(0.22f));
 
         if (cheats_open_)
@@ -934,66 +1121,86 @@ class Aurora final : public app::Concept
     // The codes in the game's cheat file, inside the sheet that was showing its
     // details. Each row is one `_C` heading; Cross switches it on or off and
     // Circle writes the file.
+    // The master switch, then one row per code - but only while the switch is
+    // on. With it off the codes do nothing, and a list of switches that cannot
+    // take effect invites turning them on and wondering why nothing happened.
+    int cheat_rows() const
+    {
+        if (!psp5::CheatsEnabled())
+            return 1;
+        return 1 + static_cast<int>(psp5::CheatList().size());
+    }
+
+    // A switch, not a tick box: a track with the knob at one end, filled in the
+    // accent colour when on. The same control the in-game menu uses.
+    void draw_toggle(gfx::DrawList &list, float x, float y, bool on) const
+    {
+        constexpr float kWidth = 56.0f;
+        constexpr float kHeight = 28.0f;
+        const float radius = kHeight * 0.5f;
+        list.rounded_rect({x, y, kWidth, kHeight}, radius,
+                          on ? palette_[3].value() : kWhite.with_alpha(0.22f));
+        const float knob = on ? x + kWidth - radius : x + radius;
+        list.circle(knob, y + radius, radius - 4.0f,
+                    on ? Color::rgb(0x0b0d16) : kWhite.with_alpha(0.85f));
+    }
+
     void draw_cheats(gfx::DrawList &list, const Rect &sheet) const
     {
         const ui::Fonts &fonts = context_.fonts;
         const psp5::Cheats &cheats = psp5::CheatList();
-        const std::span<const psp5::CheatEntry> rows = cheats.items();
+        const std::span<const psp5::CheatEntry> codes = cheats.items();
         const float x = sheet.x + 56;
 
         ui::text(list, fonts.semibold, "CHEATS", x, sheet.y + 76, 20, palette_[3].value(),
                  gfx::Align::left, 4.0f);
         ui::text(list, fonts.display, item(focused_item()).title, x - 2, sheet.y + 140, 44, kWhite);
 
-        if (rows.empty())
-        {
-            ui::text(list, fonts.regular, "No cheat file for this game.", x, sheet.y + 220, 30,
-                     kWhite.with_alpha(0.85f));
-            ui::text(list, fonts.regular, "Copy a CWCheat .ini here and open this again:", x,
-                     sheet.y + 272, 24, kWhite.with_alpha(0.6f));
-            ui::text(list, fonts.regular, cheats.path(), x, sheet.y + 312, 24,
-                     palette_[3].value());
-            return;
-        }
-
-        // Only as many rows as the sheet holds, scrolled to keep the focused one
-        // on screen. The sheet is a fixed height, so this cannot grow with the
-        // file the way a page of its own could.
         constexpr int kVisible = 7;
         constexpr float kRow = 46.0f;
-        const int count = static_cast<int>(rows.size());
-        int first = cheat_ - kVisible / 2;
-        first = std::clamp(first, 0, std::max(0, count - kVisible));
+        const int count = cheat_rows();
+        const int first = std::clamp(cheat_ - kVisible / 2, 0, std::max(0, count - kVisible));
         const float top = sheet.y + 186;
 
         for (int i = first; i < std::min(count, first + kVisible); ++i)
         {
-            const psp5::CheatEntry &row = rows[static_cast<std::size_t>(i)];
+            const bool master = i == 0;
+            const bool on = master ? psp5::CheatsEnabled()
+                                   : codes[static_cast<std::size_t>(i - 1)].enabled;
+            const std::string &label =
+                master ? kCheatsEnabledLabel : codes[static_cast<std::size_t>(i - 1)].name;
             const bool focused = i == cheat_;
             const float y = top + static_cast<float>(i - first) * kRow;
             if (focused)
                 list.rounded_rect({x - 18, y - 30, sheet.w - 76, kRow - 6}, 14,
                                   kWhite.with_alpha(0.12f));
-            // A filled mark reads as on at a glance; the outline is off.
-            const Rect box{x, y - 23, 24, 24};
-            if (row.enabled)
-            {
-                list.rounded_rect(box, 7, palette_[3].value());
-                list.line(box.x + 6, box.cy(), box.cx() - 1, box.y + box.h - 7, 3,
-                          Color::rgb(0x0b0d16));
-                list.line(box.cx() - 1, box.y + box.h - 7, box.x + box.w - 5, box.y + 6, 3,
-                          Color::rgb(0x0b0d16));
-            }
-            else
-            {
-                list.bordered_rect(box, 7, Color::rgb(0x000000, 0.0f), 2,
-                                   kWhite.with_alpha(0.45f));
-            }
-            ui::text(list, focused ? fonts.semibold : fonts.regular, row.name, x + 44, y, 26,
+            draw_toggle(list, x, y - 23, on);
+            ui::text(list, focused || master ? fonts.semibold : fonts.regular, label, x + 76, y, 26,
                      kWhite.with_alpha(focused ? 1.0f : 0.75f));
         }
 
-        if (count > kVisible)
+        if (!psp5::CheatsEnabled())
+        {
+            const float y = top + kRow + 16.0f;
+            char note[96];
+            std::snprintf(note, sizeof(note), "%u code%s in this game's file.",
+                          (unsigned)codes.size(), codes.size() == 1 ? "" : "s");
+            ui::text(list, fonts.regular, codes.empty() ? "Turn this on to use cheats." : note, x,
+                     y, 26, kWhite.with_alpha(0.75f));
+            if (!codes.empty())
+                ui::text(list, fonts.regular, "Turn the switch on to choose between them.", x,
+                         y + 38, 24, kWhite.with_alpha(0.55f));
+        }
+        else if (codes.empty())
+        {
+            // Under the master switch, which is worth showing on its own: it is
+            // what decides whether a file copied here later takes effect.
+            const float y = top + kRow + 16.0f;
+            ui::text(list, fonts.regular, "No cheat file for this game. Copy a CWCheat .ini to:", x,
+                     y, 24, kWhite.with_alpha(0.7f));
+            ui::text(list, fonts.regular, cheats.path(), x, y + 38, 24, palette_[3].value());
+        }
+        else if (count > kVisible)
         {
             char text[48];
             std::snprintf(text, sizeof(text), "%d of %d", cheat_ + 1, count);
@@ -1031,9 +1238,10 @@ class Aurora final : public app::Concept
         {
             list.push_opacity(tween::stagger(age_, 8, 0.08f, 0.5f) * (1.0f - sheet_.value));
             const ui::Hint hints[] = {{ui::Button::cross, "Details"},
+                                      {ui::Button::square, "Game settings"},
                                       {ui::Button::triangle, "Favorite"},
                                       {ui::Button::options, "Settings"}};
-            ui::draw_hints(list, fonts, style, hints, 3, 1824, true);
+            ui::draw_hints(list, fonts, style, hints, 4, 1824, true);
             list.pop_opacity();
         }
     }
@@ -1043,6 +1251,8 @@ class Aurora final : public app::Concept
     psp5::GameView view_ = psp5::GameView::recent; // how the library is ordered
     bool settings_open_ = false;                   // OPTIONS opened the settings panel
     int setting_ = 0;                              // its focused row
+    Typing typing_ = Typing::none;                 // which answer the keyboard is taking
+    std::string typed_user_;
     int row_ = 0;
     float age_ = 0.0f;   // seconds since enter(): drives the entrance
     float clock_ = 0.0f; // free-running time for idle motion

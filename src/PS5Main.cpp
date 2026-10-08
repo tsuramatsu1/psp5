@@ -32,6 +32,7 @@
 #include "Core/KeyMap.h"
 #include "Core/System.h"
 
+#include "PS5Achievements.h"
 #include "PS5Audio.h"
 #include "PS5Overlay.h"
 #include "PS5Log.h"
@@ -162,13 +163,33 @@ constexpr int kTelevisionDp = 1280;
 // short, and a list that scrolled under a resting thumb would be worse than one
 // that needs a press per row.
 bool PollCheatOverlay(const pad &state) {
-	constexpr uint32_t kOpenCombo = PAD_L1 | PAD_L3;
-	// The combo is a press of either button while the other is already down, so
-	// it fires whichever order they arrive in.
-	if ((state.pressed & kOpenCombo) && (state.held & kOpenCombo) == kOpenCombo) {
+	constexpr uint32_t kMenuCombo = PAD_L1 | PAD_L3;
+	constexpr uint32_t kAchievementsCombo = PAD_R1 | PAD_R3;
+	// A combo is a press of either button while the other is already down, so it
+	// fires whichever order they arrive in.
+	if ((state.pressed & kMenuCombo) && (state.held & kMenuCombo) == kMenuCombo) {
 		psp5::ToggleCheatOverlay();
 		return true;
 	}
+	if ((state.pressed & kAchievementsCombo) &&
+	    (state.held & kAchievementsCombo) == kAchievementsCombo) {
+		psp5::ToggleAchievementsBar();
+		return true;
+	}
+
+	if (psp5::AchievementsBarOpen()) {
+		if (state.pressed & PAD_UP) {
+			psp5::AchievementsBarMove(-1);
+		}
+		if (state.pressed & PAD_DOWN) {
+			psp5::AchievementsBarMove(1);
+		}
+		if (state.pressed & PAD_CIRCLE) {
+			psp5::CloseAchievementsBar();
+		}
+		return true;
+	}
+
 	if (!psp5::CheatOverlayOpen()) {
 		return false;
 	}
@@ -205,6 +226,21 @@ bool PollCheatOverlay(const pad &state) {
 // newly pressed - which turned L1 + L3 into a press on every frame it was held,
 // opening and closing the cheat panel too fast to see.
 pad g_pad{};
+
+// Bits already reported, so each is named once per run rather than per press.
+uint32_t g_reportedButtons = 0;
+
+void ReportUnmappedButtons(uint32_t pressed) {
+	uint32_t unknown = pressed & ~g_reportedButtons & ~PAD_INTERCEPTED;
+	for (const ButtonMap &entry : kButtons) {
+		unknown &= ~entry.pad;
+	}
+	if (!unknown) {
+		return;
+	}
+	g_reportedButtons |= unknown;
+	psp5::Trace("pad: no mapping for button bits 0x%08x", unknown);
+}
 
 void PollInput() {
 	pad &state = g_pad;
@@ -247,6 +283,11 @@ void PollInput() {
 		if (current.held & PAD_INTERCEPTED) {
 			continue;
 		}
+		// Any bit psp5 has no mapping for, said once. The console's button
+		// numbering is only known from other people's code, so a button that
+		// seems dead is either unmapped or arriving somewhere unexpected - and
+		// this is the difference between the two.
+		ReportUnmappedButtons(current.held & ~g_previousButtons[player]);
 		SendButtonEdges(player, current.held, g_previousButtons[player]);
 		g_previousButtons[player] = current.held;
 		SendAxes(player, current);
@@ -372,9 +413,13 @@ bool System_GetPropertyBool(SystemProperty prop) {
 	case SYSPROP_HAS_OPEN_DIRECTORY:
 	case SYSPROP_CAN_CREATE_SHORTCUT:
 	case SYSPROP_CAN_SHOW_FILE:
-	case SYSPROP_SUPPORTS_HTTPS:
 	case SYSPROP_DEBUGGER_PRESENT:
 		return false;
+	case SYSPROP_SUPPORTS_HTTPS:
+		// Checked before the request is even built, so answering no here is
+		// enough on its own to stop every https request. psp5 has a transport
+		// now - PacBrew's libcurl, in src/net - so the answer is yes.
+		return true;
 	default:
 		return false;
 	}
@@ -525,7 +570,11 @@ int main(int argc, char *argv[]) {
 		// PS5_NotifyGameEnded fires from the constructor of the browser PPSSPP
 		// switches to when a game stops. That switch only takes effect in the
 		// next frame's update(), so breaking here means it is never drawn.
+		double lastFrame = now_seconds();
 		while (!g_quit && !psp5::GameEnded()) {
+			const double thisFrame = now_seconds();
+			psp5::AchievementsBarUpdate((float)(thisFrame - lastFrame));
+			lastFrame = thisFrame;
 			PollInput();
 			NativeFrame(g_graphics);
 			g_graphics->Poll();

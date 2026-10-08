@@ -33,6 +33,11 @@ Cheats &CheatList() {
 namespace {
 
 bool g_enabled_dirty = false;
+// Which game the switch belongs to, and whether psp5 is the one that put PPSSPP
+// into game-specific mode - in a running game PPSSPP is already in it, and
+// leaving it there would take the game's settings out from under it.
+std::string g_switch_game;
+bool g_scoped_here = false;
 
 }  // namespace
 
@@ -40,23 +45,60 @@ bool CheatsEnabled() {
 	return g_Config.bEnableCheats;
 }
 
+// Called when the panel opens, so the switch below reads and writes this game's
+// value rather than the global one.
+void ScopeCheatsToGame(const std::string &discId) {
+	g_switch_game = discId;
+	g_enabled_dirty = false;
+	if (discId.empty() || g_Config.IsGameSpecific()) {
+		// Either homebrew with no id to key a config on, or a game already
+		// running - PPSSPP loaded its config when it booted.
+		return;
+	}
+	if (g_Config.HasGameConfig(discId)) {
+		g_Config.LoadGameConfig(discId);
+		g_scoped_here = true;
+	}
+}
+
 void SetCheatsEnabled(bool enabled) {
 	if (g_Config.bEnableCheats == enabled) {
 		return;
+	}
+	// A game with no settings of its own needs some before the switch has
+	// anywhere to live.
+	if (!g_switch_game.empty() && !g_Config.IsGameSpecific()) {
+		if (!g_Config.HasGameConfig(g_switch_game)) {
+			g_Config.CreateGameConfig(g_switch_game);
+		}
+		g_Config.LoadGameConfig(g_switch_game);
+		g_scoped_here = true;
 	}
 	g_Config.bEnableCheats = enabled;
 	g_enabled_dirty = true;
 }
 
 void SaveCheatsEnabled() {
-	if (!g_enabled_dirty) {
-		return;
+	const bool scoped = g_scoped_here;
+	if (g_enabled_dirty) {
+		// Deferred to here rather than done on the press: PPSSPP's save rewrites
+		// the whole ini.
+		if (!g_switch_game.empty() && g_Config.IsGameSpecific()) {
+			g_Config.SaveGameConfig(g_switch_game, g_switch_game);
+			psp5::Trace("cheats: %s for %s", g_Config.bEnableCheats ? "on" : "off",
+			            g_switch_game.c_str());
+		} else {
+			g_Config.Save("psp5 cheats");
+			psp5::Trace("cheats: master switch %s", g_Config.bEnableCheats ? "on" : "off");
+		}
+		g_enabled_dirty = false;
 	}
-	// Deferred to here rather than done on the press: PPSSPP's save rewrites the
-	// whole ini.
-	g_Config.Save("psp5 cheats");
-	g_enabled_dirty = false;
-	psp5::Trace("cheats: master switch %s", g_Config.bEnableCheats ? "on" : "off");
+	// Only the mode psp5 entered: in a running game PPSSPP owns it.
+	if (scoped && g_Config.IsGameSpecific()) {
+		g_Config.UnloadGameConfig();
+	}
+	g_scoped_here = false;
+	g_switch_game.clear();
 }
 
 void Cheats::Clear() {
@@ -69,9 +111,12 @@ void Cheats::Clear() {
 bool Cheats::Load(const std::string &discId) {
 	Clear();
 	if (discId.empty()) {
+		ScopeCheatsToGame(discId);
 		return false;
 	}
 	discId_ = discId;
+	// So the master switch below reads this game's value, not the title's.
+	ScopeCheatsToGame(discId);
 
 	CWCheatEngine engine(discId);
 	path_ = engine.CheatFilename().ToString();

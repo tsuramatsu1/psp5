@@ -26,6 +26,10 @@ struct GameArt {
 	std::string discId;  // PARAM.SFO DISC_ID, eg ULUS10512 - names the cheat file
 	Artwork icon;        // ICON0.PNG, 144x80 on a UMD title
 	Artwork background;  // PIC1.PNG, 480x272 - the key art, often absent
+	// SND0.AT3 as it sits on the disc, still encoded. The menu loop the PSP
+	// plays under a highlighted game; decoded only when one is chosen, because
+	// decoded it is twenty times the size.
+	std::string sound;
 };
 
 // Opens a PSP image and reads its artwork, exactly as PPSSPP's own game list

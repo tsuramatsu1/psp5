@@ -57,15 +57,25 @@ private:
 // The one cheat list the home screen shows, for whichever game is focused.
 Cheats &CheatList();
 
-// PPSSPP's master switch. Without it on, the codes in the file are read and
-// ignored, so the panel that lists them is also where it belongs.
+// The master switch, per game. Without it on, the codes in the file are read
+// and ignored, so the panel that lists them is also where it belongs.
 //
-// Here rather than reached through Core/Config.h directly, so the screen that
-// draws the panel needs none of PPSSPP's headers: it is compiled with volk's
-// Vulkan prototypes, and PPSSPP keeps its own in another namespace.
+// Per game, not for the title as a whole: cheats belong to the game they were
+// written for, and leaving one game's switch on would apply to the next. PPSSPP
+// marks this setting PER_GAME, so it has somewhere to keep it - a second ini
+// beside the global one, and a mode it switches into to read and write it.
+// Cheats::Load enters that mode and SaveCheatsEnabled leaves it.
+//
+// Declared here rather than reached through Core/Config.h directly, so the
+// screen that draws the panel needs none of PPSSPP's headers: it is compiled
+// with volk's Vulkan prototypes, and PPSSPP keeps its own in another namespace.
 bool CheatsEnabled();
 void SetCheatsEnabled(bool enabled);
-// Writes the switch back to PPSSPP's configuration, if it changed.
+// Points the switch at one game. Cheats::Load does this; it is here because the
+// in-game menu loads the list for a game PPSSPP has already scoped itself to.
+void ScopeCheatsToGame(const std::string &discId);
+// Writes the switch back to the game's configuration, if it changed, and gives
+// up the game-specific mode Load took.
 void SaveCheatsEnabled();
 
 }  // namespace psp5

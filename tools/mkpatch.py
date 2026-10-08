@@ -28,7 +28,7 @@ def write(path, text):
 	# Explicit LF. A CRLF line in a patched source becomes a CRLF line in the
 	# patch, and the shell scripts this build generates fail on the first of
 	# them with "pipefail: invalid option name".
-	path.write_bytes(text.replace('\r\n', '\n').encode('utf-8'))
+	path.write_bytes(text.replace('\n', '\n').encode('utf-8'))
 
 # ---- VulkanLoader.cpp (unchanged from the first version) -----------------
 p = D / 'Common/GPU/Vulkan/VulkanLoader.cpp'
@@ -129,6 +129,9 @@ new = r"""if(PPSSPP_PS5)
 	add_library(psp5_platform STATIC
 		${PSP5_SRC_DIR}/PS5Main.cpp
 		${PSP5_SRC_DIR}/PS5Audio.cpp
+		${PSP5_SRC_DIR}/PS5Achievements.cpp
+		${PSP5_SRC_DIR}/net/PS5HttpRequest.cpp
+		${PSP5_SRC_DIR}/net/console_curl.c
 		${PSP5_SRC_DIR}/PS5Overlay.cpp
 		${PSP5_SRC_DIR}/PS5Paths.cpp
 		${PSP5_SRC_DIR}/PS5Log.cpp
@@ -139,6 +142,8 @@ new = r"""if(PPSSPP_PS5)
 		${PSP5_SRC_DIR}/PS5LibcShims.cpp
 		${PSP5_SRC_DIR}/platform/platform.c
 	)
+	# Only here: see the note where PSP5_CURL_PREFIX is set.
+	target_include_directories(psp5_platform PRIVATE ${PSP5_CURL_PREFIX}/include)
 	target_link_libraries(psp5_platform psp5_app)
 
 	# The Aurora Shelf launcher, from PS5_VKHomebrewUI's kit (tools/setup-kit.sh).
@@ -167,6 +172,8 @@ new = r"""if(PPSSPP_PS5)
 			${PSP5_SRC_DIR}/ui/PS5AuroraLauncher.cpp
 			${PSP5_SRC_DIR}/ui/PS5GameArt.cpp
 			${PSP5_SRC_DIR}/ui/PS5GameLibrary.cpp
+			${PSP5_SRC_DIR}/ui/PS5GameSound.cpp
+			${PSP5_SRC_DIR}/ui/PS5Keyboard.cpp
 			${PSP5_SRC_DIR}/ui/PS5Cheats.cpp
 			${PSP5_SRC_DIR}/ui/PS5Settings.cpp
 			${PSP5_SRC_DIR}/ui/kit/aurora.cpp
@@ -513,6 +520,202 @@ extern "C" void PS5_DrawOverlays(UIContext *ui);
 extern "C" bool PS5_WantsOverlay();
 #endif"""
 assert t.count(old) == 1, "overlay declarations anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# ---- a game's SND0.AT3, for psp5's home screen ----------------------------
+# PPSSPP plays this itself when a game is highlighted in its game grid, but only
+# through its own audio path, and on psp5's home screen that is not running -
+# the kit's mixer owns the device until a game starts. The RIFF parsing and the
+# ATRAC decoder set-up are the fiddly part and they are already right here, so
+# this exposes them; psp5 does the resampling and the playing.
+p = D / 'UI/BackgroundAudio.cpp'
+t = p.read_text()
+old = """bool BackgroundAudio::Play() {"""
+new = """#if PPSSPP_PLATFORM(PS5)
+// Decodes a whole SND0.AT3 to interleaved stereo s16. The caller frees *out
+// with free(). Returns false for anything that is not ATRAC psp5 can decode.
+//
+// Whole rather than streamed: a games jingle is a few seconds, psp5 wants to
+// loop it under a menu, and decoding once means the audio thread only ever
+// reads from memory.
+extern "C" bool PS5_DecodeAtrac(const char *bytes, int size, short **out, int *outFrames,
+								int *outRate) {
+	*out = nullptr;
+	*outFrames = 0;
+	*outRate = 0;
+	if (!bytes || size <= 0) {
+		return false;
+	}
+
+	RIFFReader riff((const uint8_t *)bytes, size);
+	WavData wave;
+	if (!wave.Read(riff) || !wave.raw_data || wave.raw_bytes_per_frame <= 0) {
+		return false;
+	}
+	if (wave.codec != PSP_CODEC_AT3 && wave.codec != PSP_CODEC_AT3PLUS) {
+		return false;
+	}
+
+	const uint8_t *extraData = wave.codec == PSP_CODEC_AT3 ? &wave.at3_extradata[2] : nullptr;
+	const size_t extraDataSize = wave.codec == PSP_CODEC_AT3 ? 14 : 0;
+	AudioDecoder *decoder =
+		CreateAudioDecoder((PSPAudioType)wave.codec, wave.sample_rate, wave.num_channels,
+						   wave.raw_bytes_per_frame, extraData, extraDataSize);
+	if (!decoder) {
+		return false;
+	}
+
+	std::vector<int16_t> pcm;
+	std::vector<int16_t> block(32 * 1024);
+	for (int offset = 0; offset + wave.raw_bytes_per_frame <= wave.raw_data_size;
+		 offset += wave.raw_bytes_per_frame) {
+		int consumed = 0;
+		int samples = 0;
+		if (!decoder->Decode(wave.raw_data + offset, wave.raw_bytes_per_frame, &consumed, 2,
+							 block.data(), &samples) ||
+			samples <= 0) {
+			break;
+		}
+		pcm.insert(pcm.end(), block.begin(), block.begin() + (size_t)samples * 2);
+	}
+	delete decoder;
+
+	if (pcm.empty()) {
+		return false;
+	}
+	*outFrames = (int)(pcm.size() / 2);
+	*outRate = wave.sample_rate;
+	*out = (short *)malloc(pcm.size() * sizeof(int16_t));
+	if (!*out) {
+		*outFrames = 0;
+		return false;
+	}
+	memcpy(*out, pcm.data(), pcm.size() * sizeof(int16_t));
+	return true;
+}
+#endif
+
+bool BackgroundAudio::Play() {"""
+assert t.count(old) == 1, "BackgroundAudio::Play anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# ---- HTTPS on the console -------------------------------------------------
+# PPSSPP turns HTTPS off for every platform that is not Windows, Apple or
+# Android, and with it an https request returns a null handle and is never sent.
+# That is why RetroAchievements did nothing at all: its API is https only.
+#
+# Its own HTTPS is naett, which cannot be used here for two reasons: it is a git
+# submodule, so this patch cannot reach it, and it chooses its backend from
+# platform macros the console does not set. psp5 drives PacBrew's libcurl
+# directly instead (src/net/), which is built for this target already and is
+# what ProsperoEden uses in a native title.
+p = D / 'CMakeLists.txt'
+t = p.read_text()
+old = """if(NOT ANDROID AND NOT WIN32 AND (NOT APPLE OR IOS))
+	set(HTTPS_NOT_AVAILABLE ON)
+endif()"""
+new = """if(NOT ANDROID AND NOT WIN32 AND (NOT APPLE OR IOS))
+	set(HTTPS_NOT_AVAILABLE ON)
+endif()
+if(PPSSPP_PS5)
+	# The prefix PacBrew builds into: headers and archives for libcurl and the
+	# OpenSSL it was built against. HTTPS_NOT_AVAILABLE stays set, so naett is
+	# never built; the factory below takes a PS5 branch instead.
+	if(NOT PSP5_CURL_PREFIX)
+		set(PSP5_CURL_PREFIX "/opt/ps5-payload-sdk/target/user/homebrew")
+	endif()
+	if(NOT EXISTS "${PSP5_CURL_PREFIX}/include/curl/curl.h")
+		message(FATAL_ERROR "no curl headers under ${PSP5_CURL_PREFIX}; set PSP5_CURL_PREFIX")
+	endif()
+	# Deliberately not include_directories(): that prefix also carries a libpng,
+	# and putting it in front of everything made PPSSPP compile against libpng16
+	# while linking against its own bundled libpng17 - which only showed up as
+	# five png_set_* symbols that suddenly did not exist. It goes on the one
+	# target that asks for curl, below.
+endif()"""
+assert t.count(old) == 1, "HTTPS_NOT_AVAILABLE anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+p = D / 'Common/Net/HTTPRequest.cpp'
+t = p.read_text()
+old = """#ifndef HTTPS_NOT_AVAILABLE
+		return std::make_shared<HTTPSRequest>(method, url, postdata, postMime, outfile, flags, name);
+#else
+		return std::shared_ptr<Request>();
+#endif"""
+new = """#ifndef HTTPS_NOT_AVAILABLE
+		return std::make_shared<HTTPSRequest>(method, url, postdata, postMime, outfile, flags, name);
+#elif PPSSPP_PLATFORM(PS5)
+		// Fully qualified: this call is inside namespace http, where a bare
+		// psp5 would be looked up as http::psp5 first.
+		return ::psp5::CreateHttpsRequest(method, url, postdata, postMime, outfile, flags, name);
+#else
+		return std::shared_ptr<Request>();
+#endif"""
+assert t.count(old) == 1, "https factory anchor"
+t = t.replace(old, new, 1)
+
+# At the top of the file, not beside the factory: that sits inside namespace
+# http, and an include there would declare psp5 as http::psp5.
+old = """#include "Common/Net/HTTPRequest.h"
+#include "Common/Net/HTTPClient.h"
+"""
+new = """#include "Common/Net/HTTPRequest.h"
+#include "Common/Net/HTTPClient.h"
+#if PPSSPP_PLATFORM(PS5)
+#include "net/PS5HttpRequest.h"
+#endif
+"""
+assert t.count(old) == 1, "factory declaration anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# The home screen runs its own loop, so nothing was pumping the queue these
+# requests travel on: a sign-in would be posted and then wait for ever.
+p = D / 'UI/NativeApp.cpp'
+t = p.read_text()
+old = """extern "C" void PS5_BootGame(const char *path) {"""
+new = """extern "C" void PS5_PumpNetwork() {
+	g_DownloadManager.Update();
+	Achievements::Idle();
+}
+
+extern "C" void PS5_BootGame(const char *path) {"""
+assert t.count(old) == 1, "pump anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# OpenSSL comes with libcurl, and its libcrypto exports AES_encrypt, AES_decrypt
+# and AES_cbc_encrypt as well - with a different key structure and a different
+# signature. Two definitions of each is a duplicate symbol at link time, and
+# letting either win would hand one library the other's idea of a key: kirk's
+# takes an AES_ctx, OpenSSL's an AES_KEY, and they are not the same shape. So
+# kirk's say whose they are. Renamed in the header, which both its own source
+# and every caller include.
+p = D / 'ext/libkirk/AES.h'
+t = p.read_text()
+old = """#ifndef __RIJNDAEL_H
+#define __RIJNDAEL_H
+
+#include "kirk_common.h"
+"""
+new = """#ifndef __RIJNDAEL_H
+#define __RIJNDAEL_H
+
+#include "kirk_common.h"
+
+/* psp5: these names belong to OpenSSL too, which is linked in for HTTPS. */
+#define AES_set_key kirk_AES_set_key
+#define AES_encrypt kirk_AES_encrypt
+#define AES_decrypt kirk_AES_decrypt
+#define AES_cbc_encrypt kirk_AES_cbc_encrypt
+#define AES_cbc_decrypt kirk_AES_cbc_decrypt
+#define AES_CMAC kirk_AES_CMAC
+"""
+assert t.count(old) == 1, "kirk AES anchor"
 t = t.replace(old, new, 1)
 write(p, t)
 

@@ -70,6 +70,22 @@ mapfile -t extra_libs < <(find "$build/lib" -name '*.a' \
 # its archives are not under build/lib and have to be named here. Without them the
 # link fails on avcodec_*, and the PSP's video and Atrac3 audio are the reason to
 # have built it.
+# PacBrew's libcurl and the OpenSSL it was built against: psp5's HTTPS, and the
+# only way RetroAchievements can reach its server. libcurl.la names the rest of
+# what it needs. Not zlib or zstd from this prefix - the title already links
+# PPSSPP's and RADV's, and a second copy of either is a duplicate of every
+# symbol in it.
+curl_prefix=${PSP5_CURL_PREFIX:-/opt/ps5-payload-sdk/target/user/homebrew}
+curl_libs=()
+if [[ -f $curl_prefix/lib/libcurl.a ]]; then
+	for name in libcurl libpsl libssl libcrypto libiconv; do
+		[[ -f $curl_prefix/lib/$name.a ]] && curl_libs+=("$curl_prefix/lib/$name.a")
+	done
+	printf '==> linking with libcurl from %s\n' "$curl_prefix"
+else
+	echo "warning: no libcurl at $curl_prefix; HTTPS and RetroAchievements will not work" >&2
+fi
+
 ffmpeg_prefix=${PSP5_FFMPEG_PREFIX:-$root/build/ffmpeg}
 ffmpeg_libs=()
 if [[ -f $ffmpeg_prefix/lib/libavcodec.a ]]; then
@@ -109,10 +125,11 @@ fi
 link_title() {
 	"$sdk/bin/prospero-lld" "${radv_linker_script[@]}" --eh-frame-hdr "${radv_link_flags[@]}" \
 		--version-script "$native/app-symbols.map" --exclude-libs=ALL \
-		--no-dynamic-linker "$@" \
+		--no-dynamic-linker --wrap=fcntl "$@" \
 		-e _start -o "$work/llvm-pie.elf" \
 		"$work/obj/app_crt.o" \
-		--start-group "${psp5_libs[@]}" "${extra_libs[@]}" ${ffmpeg_libs[@]+"${ffmpeg_libs[@]}"} --end-group \
+		--start-group "${psp5_libs[@]}" "${extra_libs[@]}" ${ffmpeg_libs[@]+"${ffmpeg_libs[@]}"} \
+		${curl_libs[@]+"${curl_libs[@]}"} --end-group \
 		"$work/stubs/libSceAgc.so" "$work/stubs/libSceAgcDriver.so" \
 		"${radv_link_inputs[@]}" \
 		--as-needed "$sdk"/target/lib/*.so
@@ -222,6 +239,17 @@ if [[ -d $kit/assets/fonts ]]; then
 ' "$(find "$app/ui/fonts" -type f | wc -l)"
 else
 	echo "==> no kit fonts at $kit/assets/fonts; the launcher will not start"
+fi
+
+# The kit's recorded interface sounds, which the launcher loads from
+# /app0/ui/sfx. One folder per sound set; Aurora asks for "glass". Not fatal:
+# without them every cue falls back to a synthesised tone.
+if [[ -d $kit/assets/audio/sfx ]]; then
+	mkdir -p "$app/ui"
+	rm -rf -- "$app/ui/sfx"
+	cp -a -- "$kit/assets/audio/sfx" "$app/ui/sfx"
+	printf '==> staged %s kit sounds
+' "$(find "$app/ui/sfx" -type f | wc -l)"
 fi
 
 # Everything a title creates must be reachable over FTP, which runs as another

@@ -46,6 +46,106 @@ constexpr hui::gfx::BackdropMode kModes[] = {
     hui::gfx::BackdropMode::dots,   hui::gfx::BackdropMode::phosphor,
 };
 
+// One UTF-8 character, and where the next one starts.
+std::uint32_t NextCodepoint(const std::string &text, std::size_t *at) {
+	const unsigned char lead = (unsigned char)text[*at];
+	int extra = 0;
+	std::uint32_t value = lead;
+	if (lead >= 0xF0) {
+		extra = 3;
+		value = lead & 0x07u;
+	} else if (lead >= 0xE0) {
+		extra = 2;
+		value = lead & 0x0Fu;
+	} else if (lead >= 0xC0) {
+		extra = 1;
+		value = lead & 0x1Fu;
+	}
+	if (*at + (std::size_t)extra >= text.size()) {
+		*at = text.size();
+		return lead;
+	}
+	for (int i = 0; i < extra; ++i) {
+		value = (value << 6) | ((unsigned char)text[*at + 1 + (std::size_t)i] & 0x3Fu);
+	}
+	*at += (std::size_t)extra + 1;
+	return value;
+}
+
+// The kit's fonts are baked atlases of about 113 glyphs - printable ASCII and a
+// handful of symbols - and anything outside that is drawn as a question mark.
+// Game titles are not written for that: a PARAM.SFO carries whatever the
+// publisher used, and an Asian release of a western game is full of fullwidth
+// punctuation, so "God of War - Ghost of Sparta" arrived with a dash the atlas
+// had never heard of and came out as "God of War ? Ghost of Sparta".
+//
+// So the few characters that have an obvious ASCII equivalent are given it, and
+// the rest are dropped rather than drawn as noise. A title in a script the atlas
+// cannot show at all - Japanese, Korean - is left to its filename, which is
+// usually transliterated already.
+std::string Simplify(const std::string &text) {
+	std::string out;
+	out.reserve(text.size());
+	std::size_t at = 0;
+	while (at < text.size()) {
+		const std::uint32_t c = NextCodepoint(text, &at);
+		if (c >= 0x20 && c < 0x7F) {
+			out.push_back((char)c);
+			continue;
+		}
+		switch (c) {
+			case 0x00A0:  // no-break space
+			case 0x3000:  // ideographic space
+				out.push_back(' ');
+				break;
+			case 0x00AD:  // soft hyphen
+			case 0x2010: case 0x2011: case 0x2012: case 0x2013: case 0x2014: case 0x2015:
+			case 0x2212:  // minus sign
+			case 0x30FC:  // katakana prolonged sound mark
+			case 0xFF0D:  // fullwidth hyphen-minus
+				out.push_back('-');
+				break;
+			case 0x2018: case 0x2019: case 0x02BC:
+				out.push_back('\'');
+				break;
+			case 0x201C: case 0x201D:
+				out.push_back('"');
+				break;
+			case 0x2026:
+				out.append("...");
+				break;
+			case 0x00D7:
+				out.push_back('x');
+				break;
+			default:
+				// Fullwidth forms sit one block above their ASCII originals.
+				if (c >= 0xFF01 && c <= 0xFF5E) {
+					out.push_back((char)(c - 0xFF00 + 0x20));
+				}
+				// Everything else - (R), (TM), CJK - is dropped.
+				break;
+		}
+	}
+	// Dropping a character can leave two spaces where there was one.
+	std::string tidy;
+	bool gap = false;
+	for (const char c : out) {
+		if (c == ' ') {
+			gap = true;
+			continue;
+		}
+		if (gap && !tidy.empty()) {
+			tidy.push_back(' ');
+		}
+		gap = false;
+		tidy.push_back(c);
+	}
+	while (!tidy.empty() && (tidy.back() == ' ' || tidy.back() == '-')) {
+		tidy.pop_back();
+	}
+	return tidy;
+}
+
 std::string Lower(const std::string &text) {
 	std::string out = text;
 	for (char &c : out) {
@@ -130,7 +230,7 @@ std::string PrettyTitle(const std::string &filename) {
 	while (!out.empty() && (out.back() == ' ' || out.back() == '-')) {
 		out.pop_back();
 	}
-	return out.empty() ? filename : out;
+	return out.empty() ? filename : Simplify(out);
 }
 
 std::string SizeText(std::uint64_t bytes) {
@@ -460,10 +560,18 @@ bool GameLibrary::Build(hui::gfx::Renderer &renderer, const hui::ui::Fonts &font
 		if (!art.title.empty()) {
 			// PARAM.SFO over the filename: "God of War: Ghost of Sparta" rather
 			// than whatever the dump was called.
-			entry.title = art.title;
+			const std::string simplified = Simplify(art.title);
+			if (!simplified.empty()) {
+				entry.title = simplified;
+			}
 		}
 		entry.has_art = art.icon.valid();
 		entry.disc_id = art.discId;
+		// A few hundred kilobytes each. A disc with something far larger under
+		// this name is not a menu loop, and is not worth the memory.
+		if (art.sound.size() <= kMaxSoundBytes) {
+			entry.sound = std::move(art.sound);
+		}
 
 		// The palette follows the artwork where there is any, so the Aurora
 		// backdrop behind the shelf takes its colour from the focused game.

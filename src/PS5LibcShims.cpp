@@ -18,8 +18,6 @@
 //
 //      fork                               ext/imgui
 //      link, symlink, readlink, pathconf  ext/armips, the MIPS assembler
-//      isatty, gai_strerror               PPSSPP's logging and ad-hoc networking
-//      mkstemp                            RADV, not PPSSPP
 //
 //    PS5_RetroArch's PPSSPP core met the same class of problem on its first console
 //    run ("unresolved native runtime import: gai_strerror") and solves it the same
@@ -90,22 +88,9 @@ long pathconf(const char *, int) {
 	return -1;
 }
 
-int mkstemp(char *) {
-	errno = ENOSYS;
-	return -1;
-}
-
-// The title's standard output is a log file, never a terminal, so 0 is the true
-// answer and log colouring stays off.
-int isatty(int) {
-	errno = ENOTTY;
-	return 0;
-}
-
-const char *gai_strerror(int) {
-	// psp5 does not resolve names: SYSPROP_SUPPORTS_HTTPS is false and the
-	// networking paths are off. Reached only if something asks anyway.
-	return "name resolution is not available on this platform";
-}
+// isatty, mkstemp and gai_strerror were here too, and are now src/net/console_curl.c's:
+// libcurl needs working versions of all three, not the refusals these were, and
+// that file is where the console's networking quirks are kept. Two definitions
+// of each is a duplicate symbol at link time, so these gave way.
 
 }  // extern "C"
