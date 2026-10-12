@@ -728,7 +728,8 @@ class Aurora final : public app::Concept
                      focused ? palette_[3].value() : kWhite.with_alpha(0.6f), gfx::Align::right);
         }
 
-        draw_button_hints(list);
+        if (asking_ < 0)
+            draw_button_hints(list);
         draw_ask(list);
     }
 
@@ -2325,6 +2326,11 @@ class Aurora final : public app::Concept
 
     void draw_hints(gfx::DrawList &list) const
     {
+        // The button panel is a screen of its own and draws its own row. This
+        // one runs after it, so without this the settings' legend lands on top
+        // of the panel's: two rows of glyphs in one place, neither readable.
+        if (buttons_open_)
+            return;
         const ui::Fonts &fonts = context_.fonts;
         const ui::GlyphStyle style = ui::GlyphStyle::dark();
         if (settings_open_)
