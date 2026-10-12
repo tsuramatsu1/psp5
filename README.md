@@ -36,6 +36,28 @@ PPSA99131/memstick/PSP/TEXTURES/<DISC_ID>/      # a texture pack, with its textu
 
 The disc id is shown under the title on the home screen.
 
+### Games on a USB drive
+
+A drive holds the same tree, so the same paths work with `/mnt/usb0/PSP` in
+place of `PPSA99131/memstick/PSP`. All eight USB ports and both extended drives
+(`/mnt/usb0` to `/mnt/usb7`, `/mnt/ext0`, `/mnt/ext1`) are read, and a texture
+pack on a drive is used in place of one on the memory stick.
+
+```
+/mnt/usb0/PSP/GAME/<your game>.iso
+/mnt/usb0/PSP/TEXTURES/<DISC_ID>/
+```
+
+**This needs folder listing to be unlocked.** A PS5 title can open a file by its
+full path but cannot list a folder, and finding games means listing. PSP5 asks
+for the unlock at every start, and any one of these answers: **etaHEN** (turn on
+*Legacy CMD server* in its toolbox), **OnionHEN**, **LegacyJB**, or the **PS5SX2
+Helper** (add PSP5 to its `/data/whitelist.txt`).
+
+Nothing is escaped here. The console is already running something as root and
+PSP5 asks it for the permission; where nothing answers, PSP5 runs from its own
+memory stick as before and a drive looks empty. `psp5.log` says which it was.
+
 ### RetroAchievements
 
 Sign in from **OPTIONS → System → RetroAchievements** and games award
@@ -65,8 +87,10 @@ offering to sign in.
 ### Texture packs
 
 **Settings → System → Texture replacement** loads a pack from
-`memstick/PSP/TEXTURES/<DISC_ID>/`. A pack needs a `textures.ini` beside its
-images, even a bare one - without it the replacer stays off and says nothing.
+`memstick/PSP/TEXTURES/<DISC_ID>/`, or from `<drive>/PSP/TEXTURES/<DISC_ID>/`
+when a USB drive has one for that game - which is where a pack usually wants to
+be. A pack needs a `textures.ini` beside its images, even a bare one - without
+it the replacer stays off and says nothing.
 
 **Save new textures** writes what a game draws to
 `memstick/PSP/TEXTURES/<DISC_ID>/new/`, named by hash, which is how a pack is
@@ -91,8 +115,54 @@ and boots it straight into the newest one.
 
 In the settings, **L1 / R1** turn the page — Picture, Sound, Controls, System —
 and left and right change the focused row. *Close PSP5* is at the foot of
-System. On Controls, **Cross** on a button row asks which console button that
-PSP button should sit on; press it, or a direction on the D-pad to leave it.
+System.
+
+#### Moving the buttons
+
+**Settings → Controls → Buttons** opens a panel of its own, listing all twelve
+of the PSP's buttons — the four face buttons, both shoulders, Start, Select and
+the four directions — and the console button each sits on.
+
+| | |
+| --- | --- |
+| **Cross** | set the console button |
+| **Square** | set a second one |
+| **Triangle** | clear the second |
+| **Circle** | back |
+
+A PSP button can answer two console buttons, so Select can sit on both the touch
+pad and L3, or L on both L1 and L2.
+
+With the prompt open, press the console button you want. Every button is a
+binding, so none of them is free to mean "not that one" — the prompt gives up
+after five seconds and leaves the row as it was. Binding a button takes it from
+wherever it was, and that row is left reading *Not set*; **Reset the buttons**
+puts all twelve back.
+
+This changes what a game is sent and nothing else. The home screen and the
+in-game menu read the pad directly, so Cross still chooses and Circle still goes
+back however the panel is set, and a mapping cannot leave you unable to reach
+the row that would undo it.
+
+#### USB controllers
+
+> **Experimental, and not tested on hardware.**
+
+PSP5 can read controllers the console will not pair: **Xbox 360 wired pads**
+(XInput), **PS3 USB pads**, a **DualShock 3** or **DualShock 4** on a cable, and
+generic USB HID gamepads read through their own report descriptor. One folds
+into player one, so it works beside a DualSense or on its own.
+
+It is on by default, because it does nothing at all until a controller the
+console ignores is plugged in. **Settings → Controls → USB controllers** turns
+it off, and a file called `nousbpad` in the title's folder stops it before it
+starts.
+
+Only devices PSP5 can identify are read. A DualSense, a keyboard, a mouse, a hub
+and a drive are left alone, and PSP5 does not open the endpoints of a device the
+kernel would not name — which is known to take a wired DualSense away from the
+whole console until it is powered off. When a pad does not work, `psp5.log` has
+a line for every device looked at and why it was taken or left.
 
 In a game:
 
@@ -103,6 +173,26 @@ In a game:
 
 The triggers are used for the menu because the PSP has no L2 or R2 of its own -
 its shoulder buttons are L1 and R1, which a game needs.
+
+### Language
+
+**Settings → System → Language** sets what a game is told the console's language
+is, and the language the home screen itself is in: 45 of them, including
+Japanese, Korean, Chinese, Arabic, Hebrew, Thai and Lao. Right-to-left languages
+read right to left.
+
+Where PPSSPP has a translation PSP5 uses it. The rest of the interface is PSP5's
+own and lives in `assets/lang/psp5/<id>.ini`, 78 strings a language, as plain
+`English = translation` lines. **Those are machine-made and unread in most of
+these languages.** A line that is wrong is one line to fix, and a missing line
+falls back to its English.
+
+The fonts carry 3,055 glyphs a face rather than the kit's 113;
+`tools/bake-fonts.sh` builds them and `tools/make-strings.py` writes the
+translation files.
+
+Arabic is drawn unjoined - there is no shaping - and the screen is not mirrored
+for right-to-left languages, only the text.
 
 ### Typing
 
@@ -122,6 +212,8 @@ shifts, **R2** is done, **Circle** gives up.
 | The SDK | the [PS5_PayloadSDK](https://github.com/mihawk-99/PS5_PayloadSDK) fork, for `ps5platform/{exec,shm,heap,fp}.h` |
 | HTTPS | PacBrew's libcurl and OpenSSL, cross-built for the console |
 | Networking | `console_curl.c`, vendored in `src/net/` from [ps5-native-app-boilerplate](https://github.com/BlackBearReloaded/ps5-native-app-boilerplate) (GPL-3.0-or-later) |
+| The unlock request | the protocol of [SwanStationPS5](https://github.com/darkxex/SwanStationPS5)'s `ps5_unlock.c` and [PS5SX2](https://github.com/Swordpdf/PS5SX2)'s `ProsperoHenJailbreak.cpp` (both GPL-3.0-or-later) |
+| USB controllers | the device routes and report decoding of PS5SX2's `ProsperoUsbPad.cpp` and `OrbisUsbPadDecode.h` (GPL-3.0-or-later), narrowed to pads |
 
 PPSSPP is not vendored. `tools/build.sh` fetches the pinned revision and applies
 the two patches, so tracking upstream is a rebase of those patches rather than a
@@ -298,8 +390,15 @@ The hard parts of this are other people's: **Henrik Rydgård** and PPSSPP's
 contributors for the emulator this is built on, **mihawk-99** for the PS5 Vulkan
 driver, the payload SDK fork, the platform layer, the homebrew UI kit and the
 PPSSPP port patch, **BlackBearReloaded** for the console networking in
-ps5-native-app-boilerplate, and **Swordpdf** for PS5SX2, which is what a
-standalone emulator title on this stack looks like.
+ps5-native-app-boilerplate, **Swordpdf** for PS5SX2, which is what a standalone
+emulator title on this stack looks like and whose USB controller code and
+elevation request PSP5 follows, and **darkxex** for SwanStationPS5, whose
+`ps5_unlock.c` is the clearest account of how a title asks to be let out of the
+sandbox.
+
+The services that answer that request are **etaHEN**, **OnionHEN**, **LegacyJB**
+and the **PS5SX2 Helper**; without one of them running, no title here can list a
+folder on a USB drive.
 
 RetroAchievements support is rcheevos, which PPSSPP already carries, pointed at
 [retroachievements.org](https://retroachievements.org) — the achievements
