@@ -138,10 +138,16 @@ new = r"""if(PPSSPP_PS5)
 		${PSP5_SRC_DIR}/PS5VulkanContext.cpp
 		${PSP5_SRC_DIR}/PS5VulkanLoader.cpp
 		${PSP5_SRC_DIR}/PS5Memory.cpp
+		${PSP5_SRC_DIR}/PS5UsbPad.cpp
+		${PSP5_SRC_DIR}/PS5Unlock.c
 		${PSP5_SRC_DIR}/PS5GLStubs.cpp
 		${PSP5_SRC_DIR}/PS5LibcShims.cpp
 		${PSP5_SRC_DIR}/platform/platform.c
 	)
+	# src/ on the path for psp5's own headers: platform.c reaches PS5UsbPad.h,
+	# which sits a directory above it. psp5_ui exports the same directory, but
+	# only when the UI kit is present, and this target builds without it.
+	target_include_directories(psp5_platform PRIVATE ${PSP5_SRC_DIR})
 	# Only here: see the note where PSP5_CURL_PREFIX is set.
 	target_include_directories(psp5_platform PRIVATE ${PSP5_CURL_PREFIX}/include)
 	target_link_libraries(psp5_platform psp5_app)
@@ -177,7 +183,9 @@ new = r"""if(PPSSPP_PS5)
 			${PSP5_SRC_DIR}/ui/PS5Keyboard.cpp
 			${PSP5_SRC_DIR}/ui/PS5Prefs.cpp
 			${PSP5_SRC_DIR}/ui/PS5Cheats.cpp
+			${PSP5_SRC_DIR}/ui/PS5Controls.cpp
 			${PSP5_SRC_DIR}/ui/PS5Settings.cpp
+			${PSP5_SRC_DIR}/ui/PS5Strings.cpp
 			${PSP5_SRC_DIR}/ui/kit/aurora.cpp
 		)
 		target_include_directories(psp5_ui PUBLIC ${PSP5_UI_KIT}/src ${PSP5_SRC_DIR}
@@ -212,6 +220,40 @@ new = """	g_Config.flash0Directory = g_Config.internalDataDirectory / "assets/fl
 	g_Config.defaultCurrentDirectory = Path(savegame_dir);
 #elif !PPSSPP_PLATFORM(WINDOWS)"""
 assert t.count(old) == 1
+t = t.replace(old, new, 1)
+write(p, t)
+
+# psp5: a texture pack on a USB drive. PPSSPP builds this path from the memory
+# stick alone, so a pack at /mnt/usb0/PSP/TEXTURES/<DISC_ID>/ was unreachable -
+# and a pack is the one thing big enough to want a drive for. psp5 answers with
+# that drive's TEXTURES folder when one of them has a pack for the game, and
+# with nothing when none has, which leaves the memory stick exactly as it was.
+p = D / 'Core/Util/PathUtil.cpp'
+t = p.read_text()
+old = """	case DIRECTORY_TEXTURES:
+		return pspDirectory / "TEXTURES";"""
+new = """	case DIRECTORY_TEXTURES:
+#if PPSSPP_PLATFORM(PS5)
+		// psp5 knows which game is starting - it is the one the home screen
+		// launched - so it is asked rather than told. Nothing of PPSSPP's is
+		// read here: g_paramSFO is not loaded this early on every path.
+		if (const char *ps5_root = PS5_TexturesRoot()) {
+			return Path(ps5_root);
+		}
+#endif
+		return pspDirectory / "TEXTURES";"""
+assert t.count(old) == 1, "textures directory anchor"
+t = t.replace(old, new, 1)
+
+# A linkage specification is only allowed at namespace scope, so the
+# declaration goes beside the includes rather than beside its one use.
+old = """Path GetSysDirectory(PSPDirectories directoryType) {"""
+new = """#if PPSSPP_PLATFORM(PS5)
+extern "C" const char *PS5_TexturesRoot(void);
+#endif
+
+Path GetSysDirectory(PSPDirectories directoryType) {"""
+assert t.count(old) == 1, "GetSysDirectory anchor"
 t = t.replace(old, new, 1)
 write(p, t)
 
@@ -922,7 +964,12 @@ old = """	bool GetPlayedTimeString(std::string_view, std::string *str) const;"""
 new = """	bool GetPlayedTimeString(std::string_view, std::string *str) const;
 	// psp5: when this game was last started, as a UTC Unix time, or 0 for a game
 	// that has never been played.
-	uint64_t GetLastPlayed(std::string_view gameId) const;"""
+	uint64_t GetLastPlayed(std::string_view gameId) const;
+	// psp5: how long it has been played, in seconds. GetPlayedTimeString returns
+	// a translated sentence, and the home screen's font can draw about a hundred
+	// glyphs - so in Japanese or Russian it came out as a row of question marks.
+	// psp5 words it itself.
+	int GetPlayedSeconds(std::string_view gameId) const;"""
 assert t.count(old) == 1, "tracker header anchor"
 t = t.replace(old, new, 1)
 write(p, t)
@@ -933,6 +980,11 @@ old = """bool PlayTimeTracker::GetPlayedTimeString(std::string_view gameId, std:
 new = """uint64_t PlayTimeTracker::GetLastPlayed(std::string_view gameId) const {
 	auto iter = tracker_.find(gameId);
 	return iter == tracker_.end() ? 0 : iter->second.lastTimePlayed;
+}
+
+int PlayTimeTracker::GetPlayedSeconds(std::string_view gameId) const {
+	auto iter = tracker_.find(gameId);
+	return iter == tracker_.end() ? 0 : iter->second.totalTimePlayed;
 }
 
 bool PlayTimeTracker::GetPlayedTimeString(std::string_view gameId, std::string *str) const {"""

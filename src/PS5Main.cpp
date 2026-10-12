@@ -42,6 +42,10 @@
 #include "ui/PS5Settings.h"
 #include "PS5VulkanContext.h"
 #include "ui/PS5AuroraLauncher.h"
+#include "ui/PS5Controls.h"
+#include "ui/PS5Strings.h"
+#include "PS5UsbPad.h"
+#include "PS5Unlock.h"
 #include "platform/platform.h"
 
 namespace {
@@ -73,19 +77,11 @@ struct ButtonMap {
 //
 // L3 and R3 are deliberately not in PPSSPP's default map; they are sent anyway so
 // they can be bound in Controls without psp5 changing.
-constexpr ButtonMap kButtons[] = {
-    {PAD_CROSS, NKCODE_BUTTON_2},     // CTRL_CROSS
-    {PAD_CIRCLE, NKCODE_BUTTON_3},    // CTRL_CIRCLE
-    {PAD_SQUARE, NKCODE_BUTTON_4},    // CTRL_SQUARE
-    {PAD_TRIANGLE, NKCODE_BUTTON_1},  // CTRL_TRIANGLE
-    {PAD_L1, NKCODE_BUTTON_7},        // CTRL_LTRIGGER
-    {PAD_R1, NKCODE_BUTTON_8},        // CTRL_RTRIGGER
-    {PAD_OPTIONS, NKCODE_BUTTON_10},  // CTRL_START
-    {PAD_TOUCH_PAD, NKCODE_BUTTON_9}, // CTRL_SELECT
-    {PAD_UP, NKCODE_DPAD_UP},
-    {PAD_DOWN, NKCODE_DPAD_DOWN},
-    {PAD_LEFT, NKCODE_DPAD_LEFT},
-    {PAD_RIGHT, NKCODE_DPAD_RIGHT},
+// The stick presses, which are not the PSP's buttons at all - the PSP has no
+// L3 or R3 - and so are sent as themselves for PPSSPP's own Controls to bind.
+// All twelve of the PSP's buttons, the d-pad included, come from
+// ui/PS5Controls.cpp, where the settings panel can move them.
+constexpr ButtonMap kFixedButtons[] = {
     {PAD_L3, NKCODE_BUTTON_THUMBL},
     {PAD_R3, NKCODE_BUTTON_THUMBR},
 };
@@ -116,17 +112,26 @@ void AnnouncePad(int player) {
 
 void SendButtonEdges(int player, uint32_t held, uint32_t previous) {
 	const InputDeviceID device = (InputDeviceID)(DEVICE_ID_PAD_0 + player);
-	for (const ButtonMap &entry : kButtons) {
-		const bool now = (held & entry.pad) != 0;
-		const bool before = (previous & entry.pad) != 0;
+	const auto send = [&](std::uint32_t pad, int code) {
+		const bool now = (held & pad) != 0;
+		const bool before = (previous & pad) != 0;
 		if (now == before) {
-			continue;
+			return;
 		}
 		KeyInput key{};
 		key.deviceId = device;
-		key.keyCode = entry.code;
+		key.keyCode = (InputKeyCode)code;
 		key.flags = now ? KeyInputFlags::DOWN : KeyInputFlags::UP;
 		NativeKey(key);
+	};
+	for (const ButtonMap &entry : kFixedButtons) {
+		send(entry.pad, entry.code);
+	}
+	// Both of a row's console buttons at once: the key goes down when either is
+	// pressed and up when the last of them is let go, which is what a second
+	// binding is for.
+	for (int i = 0; i < psp5::controls::Count(); ++i) {
+		send(psp5::controls::PadMask(i), psp5::controls::KeyCode(i));
 	}
 }
 
@@ -250,8 +255,11 @@ uint32_t g_swallowed = 0;
 
 void ReportUnmappedButtons(uint32_t pressed) {
 	uint32_t unknown = pressed & ~g_reportedButtons & ~PAD_INTERCEPTED;
-	for (const ButtonMap &entry : kButtons) {
+	for (const ButtonMap &entry : kFixedButtons) {
 		unknown &= ~entry.pad;
+	}
+	for (int i = 0; i < psp5::controls::Count(); ++i) {
+		unknown &= ~psp5::controls::PadMask(i);
 	}
 	if (!unknown) {
 		return;
@@ -486,6 +494,14 @@ AudioBackend *System_CreateAudioBackend() { return new PS5AudioBackend(); }
 // ---------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
+	// First, before anything at all: whatever is running as root on this console
+	// is asked to let psp5 list folders, and it will only answer a process with
+	// one thread (PS5Unlock.h). platform_init starts one to pump stderr into
+	// klog, so even that has to wait - which is why this line is above the line
+	// that makes logging work, and why PS5_Unlock writes its own few lines
+	// straight to klog.
+	const PS5UnlockResult unlocked = PS5_Unlock();
+
 	// Standard error into klog and the shell's splash dismissed, before anything
 	// that might log or fail.
 	platform_init("psp5");
@@ -497,13 +513,22 @@ int main(int argc, char *argv[]) {
 	}
 
 	psp5::OpenTrace();
+	psp5::Trace("unlock: %s", PS5_UnlockDescribe(unlocked));
 	// Before the home screen is built, which reads them.
 	psp5::prefs::Load();
+	psp5::controls::Load();
 	PS5Paths::Probe();
 
 	if (!pad_open()) {
 		// Not fatal: the title still boots and its UI says there is no controller.
 		say("warning: no controller");
+	}
+	// Controllers the console will not pair - a wired Xbox 360 pad, a PS3 pad, a
+	// DualShock 3 - read over USB and folded into player one's state.
+	if (psp5::prefs::usbPads()) {
+		usb_pad_start();
+	} else {
+		psp5::Trace("usbpad: off (the settings panel)");
 	}
 
 	const std::string memstick = PS5Paths::Memstick();
@@ -528,6 +553,9 @@ int main(int argc, char *argv[]) {
 	// right if the set changes.
 	psp5::ApplyControlMapping();
 	psp5::ApplyAchievementsPreference();
+	// NativeInit has read the config, so the language is known: psp5's own
+	// strings for it, beside PPSSPP's that NativeInit already loaded.
+	psp5::LoadOwnStrings(g_Config.sLanguageIni);
 
 	if (!CreateSysDirectories()) {
 		psp5::Trace("warning: could not create the PSP directories under %s", memstick.c_str());

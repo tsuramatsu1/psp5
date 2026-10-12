@@ -26,6 +26,8 @@ std::vector<std::string> g_cheatGames;
 // PPSSPP loads packs by default and dumps nothing; psp5 starts the same way.
 bool g_replaceTextures = true;
 bool g_saveNewTextures = false;
+std::string g_buttonMap;
+bool g_usbPads = true;
 bool g_loaded = false;
 
 std::string Path() {
@@ -43,6 +45,10 @@ void Save() {
 	fprintf(fh, "hardcore=%d\n", g_hardcore ? 1 : 0);
 	fprintf(fh, "replacetextures=%d\n", g_replaceTextures ? 1 : 0);
 	fprintf(fh, "savenewtextures=%d\n", g_saveNewTextures ? 1 : 0);
+	fprintf(fh, "usbpads=%d\n", g_usbPads ? 1 : 0);
+	if (!g_buttonMap.empty()) {
+		fprintf(fh, "buttonmap=%s\n", g_buttonMap.c_str());
+	}
 	// One line per game that has them on. Absent means off, so a game that is
 	// never touched costs nothing.
 	for (const std::string &game : g_cheatGames) {
@@ -156,6 +162,32 @@ void setAchievements(bool on) {
 	psp5::Trace("prefs: achievements %s", on ? "on" : "off");
 }
 
+const std::string &buttonMap() {
+	return g_buttonMap;
+}
+
+void setButtonMap(const std::string &packed) {
+	if (packed == g_buttonMap) {
+		return;
+	}
+	g_buttonMap = packed;
+	Save();
+	psp5::Trace("prefs: button map %s", packed.empty() ? "back to the default" : packed.c_str());
+}
+
+bool usbPads() {
+	return g_usbPads;
+}
+
+void setUsbPads(bool on) {
+	if (on == g_usbPads) {
+		return;
+	}
+	g_usbPads = on;
+	Save();
+	psp5::Trace("prefs: USB controllers %s", on ? "on" : "off");
+}
+
 void setSoundSet(const std::string &name) {
 	if (name == g_soundSet) {
 		return;
@@ -192,6 +224,13 @@ void Load() {
 		}
 		if (sscanf(line, "savenewtextures=%d", &value) == 1) {
 			g_saveNewTextures = value != 0;
+		}
+		if (sscanf(line, "usbpads=%d", &value) == 1) {
+			g_usbPads = value != 0;
+		}
+		char mapping[192];
+		if (sscanf(line, "buttonmap=%191s", mapping) == 1) {
+			g_buttonMap = mapping;
 		}
 		char game[64];
 		if (sscanf(line, "cheats=%63s", game) == 1) {

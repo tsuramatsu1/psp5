@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <ctime>
 #include <dirent.h>
+#include <string>
 #include <sys/stat.h>
 
 #include "platform/platform.h"
@@ -121,6 +122,45 @@ bool Prepare() {
 	// folder that only appears once a game has already looked for it.
 	EnsureDir(Memstick() + "/PSP/Cheats");
 	return true;
+}
+
+// A folder that is there and really is a folder. stat rather than opendir: a
+// sandboxed title can stat a path it cannot list, and this is also asked about
+// drives that are not plugged in, where a failed opendir would be noise.
+static bool IsDir(const std::string &path) {
+	struct stat info;
+	return stat(path.c_str(), &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+std::vector<std::string> Drives() {
+	std::vector<std::string> found;
+	// Eight USB ports and two extended drives, which is what the console
+	// numbers. Asked every time: a drive can arrive while the shelf is up.
+	for (int i = 0; i < 10; ++i) {
+		char root[32];
+		if (i < 8) {
+			std::snprintf(root, sizeof(root), "/mnt/usb%d/PSP", i);
+		} else {
+			std::snprintf(root, sizeof(root), "/mnt/ext%d/PSP", i - 8);
+		}
+		if (IsDir(root)) {
+			found.push_back(root);
+		}
+	}
+	return found;
+}
+
+std::string TexturesRoot(const std::string &discId) {
+	if (discId.empty()) {
+		return std::string();
+	}
+	for (const std::string &drive : Drives()) {
+		const std::string textures = drive + "/TEXTURES";
+		if (IsDir(textures + "/" + discId)) {
+			return textures;
+		}
+	}
+	return std::string();
 }
 
 }  // namespace PS5Paths

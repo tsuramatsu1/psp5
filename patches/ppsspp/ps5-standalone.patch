@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e18a1387..819e6ea35 100644
+index 910f32214..f5b0f80e8 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -282,6 +282,27 @@ endif()
@@ -30,7 +30,7 @@ index 8e18a1387..819e6ea35 100644
  
  # Made this flag negative because it's hopefully quite temporary and didn't
  # want to have to update all build systems.
-@@ -1506,6 +1527,21 @@ elseif(WIN32)
+@@ -1498,6 +1519,21 @@ elseif(WIN32)
  	# Don't care about SDL.
  	set(TargetBin PPSSPPWindows)
  elseif(LIBRETRO)
@@ -52,7 +52,7 @@ index 8e18a1387..819e6ea35 100644
  else()
  	if(GOLD)
  		set(TargetBin PPSSPPGold)
-@@ -3031,6 +3067,77 @@ if(LIBRETRO)
+@@ -3019,6 +3055,85 @@ if(LIBRETRO)
  	add_subdirectory(libretro)
  endif()
  
@@ -76,10 +76,16 @@ index 8e18a1387..819e6ea35 100644
 +		${PSP5_SRC_DIR}/PS5VulkanContext.cpp
 +		${PSP5_SRC_DIR}/PS5VulkanLoader.cpp
 +		${PSP5_SRC_DIR}/PS5Memory.cpp
++		${PSP5_SRC_DIR}/PS5UsbPad.cpp
++		${PSP5_SRC_DIR}/PS5Unlock.c
 +		${PSP5_SRC_DIR}/PS5GLStubs.cpp
 +		${PSP5_SRC_DIR}/PS5LibcShims.cpp
 +		${PSP5_SRC_DIR}/platform/platform.c
 +	)
++	# src/ on the path for psp5's own headers: platform.c reaches PS5UsbPad.h,
++	# which sits a directory above it. psp5_ui exports the same directory, but
++	# only when the UI kit is present, and this target builds without it.
++	target_include_directories(psp5_platform PRIVATE ${PSP5_SRC_DIR})
 +	# Only here: see the note where PSP5_CURL_PREFIX is set.
 +	target_include_directories(psp5_platform PRIVATE ${PSP5_CURL_PREFIX}/include)
 +	target_link_libraries(psp5_platform psp5_app)
@@ -115,7 +121,9 @@ index 8e18a1387..819e6ea35 100644
 +			${PSP5_SRC_DIR}/ui/PS5Keyboard.cpp
 +			${PSP5_SRC_DIR}/ui/PS5Prefs.cpp
 +			${PSP5_SRC_DIR}/ui/PS5Cheats.cpp
++			${PSP5_SRC_DIR}/ui/PS5Controls.cpp
 +			${PSP5_SRC_DIR}/ui/PS5Settings.cpp
++			${PSP5_SRC_DIR}/ui/PS5Strings.cpp
 +			${PSP5_SRC_DIR}/ui/kit/aurora.cpp
 +		)
 +		target_include_directories(psp5_ui PUBLIC ${PSP5_UI_KIT}/src ${PSP5_SRC_DIR}
@@ -131,10 +139,10 @@ index 8e18a1387..819e6ea35 100644
  	if(APPLE)
  		if(NOT IOS)
 diff --git a/Common/GPU/Vulkan/VulkanContext.cpp b/Common/GPU/Vulkan/VulkanContext.cpp
-index 4c761c842..522904189 100644
+index 9b384731e..843cbcf4c 100644
 --- a/Common/GPU/Vulkan/VulkanContext.cpp
 +++ b/Common/GPU/Vulkan/VulkanContext.cpp
-@@ -1119,6 +1119,24 @@ VkResult VulkanContext::ReinitSurface() {
+@@ -1116,6 +1116,24 @@ VkResult VulkanContext::ReinitSurface() {
  			}
  		}
  
@@ -280,7 +288,7 @@ index 4542b9e7e..0098912cf 100644
  
  	void setUIContext(UIContext *context) { uiContext_ = context; }
 diff --git a/Core/Config.cpp b/Core/Config.cpp
-index e7fd30d52..aa12d916d 100644
+index e7fd30d52..dc843af09 100644
 --- a/Core/Config.cpp
 +++ b/Core/Config.cpp
 @@ -468,6 +468,16 @@ const char * const vulkanDefaultBlacklist[] = {
@@ -308,7 +316,7 @@ index e7fd30d52..aa12d916d 100644
  }
  
  int Config::NextValidBackend() {
-@@ -2072,6 +2083,11 @@ void PlayTimeTracker::Save(Section *section) {
+@@ -2072,6 +2083,16 @@ void PlayTimeTracker::Save(Section *section) {
  	}
  }
  
@@ -317,20 +325,30 @@ index e7fd30d52..aa12d916d 100644
 +	return iter == tracker_.end() ? 0 : iter->second.lastTimePlayed;
 +}
 +
++int PlayTimeTracker::GetPlayedSeconds(std::string_view gameId) const {
++	auto iter = tracker_.find(gameId);
++	return iter == tracker_.end() ? 0 : iter->second.totalTimePlayed;
++}
++
  bool PlayTimeTracker::GetPlayedTimeString(std::string_view gameId, std::string *str) const {
  	auto ga = GetI18NCategory(I18NCat::GAME);
  
 diff --git a/Core/Config.h b/Core/Config.h
-index 87f9f4d4d..742866b8d 100644
+index 87f9f4d4d..ce4a68421 100644
 --- a/Core/Config.h
 +++ b/Core/Config.h
-@@ -59,6 +59,9 @@ class PlayTimeTracker {
+@@ -59,6 +59,14 @@ class PlayTimeTracker {
  	void Save(Section *section);
  
  	bool GetPlayedTimeString(std::string_view, std::string *str) const;
 +	// psp5: when this game was last started, as a UTC Unix time, or 0 for a game
 +	// that has never been played.
 +	uint64_t GetLastPlayed(std::string_view gameId) const;
++	// psp5: how long it has been played, in seconds. GetPlayedTimeString returns
++	// a translated sentence, and the home screen's font can draw about a hundred
++	// glyphs - so in Japanese or Russian it came out as a row of question marks.
++	// psp5 words it itself.
++	int GetPlayedSeconds(std::string_view gameId) const;
  
  private:
  	std::map<std::string, PlayTime, std::less<>> tracker_;
@@ -382,6 +400,36 @@ index d0f670118..a73fcbbfe 100644
  	if (!Memory::IsValidRange(address, num_bytes)) {
  		// Some achievement packs are really, really spammy.
  		// So we'll just count the bad accesses.
+diff --git a/Core/Util/PathUtil.cpp b/Core/Util/PathUtil.cpp
+index 96be0eac0..fcb56f4a3 100644
+--- a/Core/Util/PathUtil.cpp
++++ b/Core/Util/PathUtil.cpp
+@@ -42,6 +42,10 @@ Path FindConfigFile(const Path &searchPath, std::string_view baseFilename, bool
+ 	return filename;
+ }
+ 
++#if PPSSPP_PLATFORM(PS5)
++extern "C" const char *PS5_TexturesRoot(void);
++#endif
++
+ Path GetSysDirectory(PSPDirectories directoryType) {
+ 	const Path &memStickDirectory = g_Config.memStickDirectory;
+ 	Path pspDirectory;
+@@ -76,6 +80,14 @@ Path GetSysDirectory(PSPDirectories directoryType) {
+ 	case DIRECTORY_CACHE:
+ 		return pspDirectory / "SYSTEM/CACHE";
+ 	case DIRECTORY_TEXTURES:
++#if PPSSPP_PLATFORM(PS5)
++		// psp5 knows which game is starting - it is the one the home screen
++		// launched - so it is asked rather than told. Nothing of PPSSPP's is
++		// read here: g_paramSFO is not loaded this early on every path.
++		if (const char *ps5_root = PS5_TexturesRoot()) {
++			return Path(ps5_root);
++		}
++#endif
+ 		return pspDirectory / "TEXTURES";
+ 	case DIRECTORY_PLUGINS:
+ 		return pspDirectory / "PLUGINS";
 diff --git a/UI/BackgroundAudio.cpp b/UI/BackgroundAudio.cpp
 index 63f1ed8ac..cb0e2e526 100644
 --- a/UI/BackgroundAudio.cpp

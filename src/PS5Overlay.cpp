@@ -41,6 +41,8 @@
 #include "PS5OverlayDraw.h"
 #include "platform/platform.h"
 #include "ui/PS5Cheats.h"
+#include "ui/PS5Settings.h"
+#include "ui/PS5Strings.h"
 
 // Defined by PPSSPP (patches/ppsspp/ps5-standalone.patch): stops and restarts
 // the cheat engine so a file edited underneath it is read again.
@@ -107,11 +109,11 @@ std::string GamePrefix() {
 	return SaveState::GetGamePrefix(g_paramSFO);
 }
 
-const char *PageTitle() {
+std::string PageTitle() {
 	switch (g_page) {
-		case Page::cheats: return "CHEATS";
-		case Page::saveState: return "SAVE STATE";
-		default: return "MENU";
+		case Page::cheats: return psp5::Own("CHEATS");
+		case Page::saveState: return psp5::Own("SAVE STATE");
+		default: return psp5::Own("MENU");
 	}
 }
 
@@ -122,15 +124,18 @@ void Rebuild() {
 	switch (g_page) {
 		case Page::root: {
 			std::snprintf(text, sizeof(text), "%u", (unsigned)CheatList().size());
-			g_rows.push_back({Kind::openCheats, "Cheats", CheatList().empty() ? "none" : text, 0,
+			g_rows.push_back({Kind::openCheats, psp5::UiWord(psp5::UiString::cheats),
+			                  CheatList().empty() ? psp5::Own("none") : std::string(text), 0,
 			                  false, false, true, true});
-			g_rows.push_back({Kind::openSaveState, "Save state", "", 0, false, false, true, true});
-			g_rows.push_back({Kind::exitGame, "Exit game", "", 0, false, false, false, true});
+			g_rows.push_back({Kind::openSaveState, psp5::UiWord(psp5::UiString::saveState), "", 0,
+			                  false, false, true, true});
+			g_rows.push_back(
+			    {Kind::exitGame, psp5::Own("Exit game"), "", 0, false, false, false, true});
 			break;
 		}
 		case Page::cheats: {
-			g_rows.push_back({Kind::cheatMaster, "Cheats enabled", "", 0, CheatsEnabled(),
-			                  true, false, true});
+			g_rows.push_back({Kind::cheatMaster, psp5::UiWord(psp5::UiString::enableCheats), "", 0,
+			                  CheatsEnabled(), true, false, true});
 			const std::span<const CheatEntry> cheats = CheatList().items();
 			if (!CheatsEnabled()) {
 				// Switched off, the codes below do nothing, and a list of
@@ -139,12 +144,13 @@ void Rebuild() {
 				std::snprintf(text, sizeof(text), "%u code%s in this game's file",
 				              (unsigned)cheats.size(), cheats.size() == 1 ? "" : "s");
 				g_rows.push_back({Kind::note,
-				                  cheats.empty() ? "Turn this on to use cheats" : text, "", 0,
+				                  cheats.empty() ? psp5::Own("Turn this on to use cheats")
+				                                 : std::string(text), "", 0,
 				                  false, false, false, false});
 				break;
 			}
 			if (Cheats::DatabaseExists()) {
-				g_rows.push_back({Kind::cheatImport, "Import from cheat.db", "", 0, false,
+				g_rows.push_back({Kind::cheatImport, psp5::Own("Import from cheat.db"), "", 0, false,
 				                  false, false, true});
 			}
 			for (int i = 0; i < (int)cheats.size(); ++i) {
@@ -153,24 +159,28 @@ void Rebuild() {
 			}
 			if (cheats.empty()) {
 				g_rows.push_back(
-				    {Kind::note, "No cheat file for this game", "", 0, false, false, false, false});
+				    {Kind::note, psp5::Own("No cheat file for this game"), "", 0, false, false,
+				     false, false});
 			}
 			break;
 		}
 		case Page::saveState: {
 			std::snprintf(text, sizeof(text), "%d", g_slot + 1);
-			g_rows.push_back({Kind::slot, "Slot", text, 0, false, false, false, true});
+			g_rows.push_back({Kind::slot, psp5::Own("Slot"), text, 0, false, false, false, true});
 			const bool hardcore = Achievements::HardcoreModeActive();
-			g_rows.push_back({Kind::save, "Save to this slot", hardcore ? "hardcore" : "", 0,
+			g_rows.push_back({Kind::save, psp5::Own("Save to this slot"),
+			                  hardcore ? psp5::Own("hardcore") : std::string(), 0,
 			                  false, false, false, !hardcore});
 			const bool has = !hardcore && SaveState::HasSaveInSlot(GamePrefix(), g_slot);
-			g_rows.push_back({Kind::load, "Load from this slot",
-			                  hardcore ? "hardcore" : (has ? "" : "empty"), 0, false, false, false,
+			g_rows.push_back({Kind::load, psp5::Own("Load from this slot"),
+			                  hardcore ? psp5::Own("hardcore")
+			                           : (has ? std::string() : psp5::Own("empty")),
+			                  0, false, false, false,
 			                  has});
 			if (hardcore) {
 				g_rows.push_back({Kind::note,
-				                  "Hardcore mode is on, so RetroAchievements does not allow save "
-				                  "states. Turn it off in settings.",
+				                  psp5::Own("Hardcore mode is on, so RetroAchievements does not "
+				                            "allow save states. Turn it off in settings."),
 				                  "", 0, false, false, false, false});
 			}
 			break;
@@ -374,7 +384,7 @@ void CheatOverlaySelect() {
 			// the panel and did nothing at all, which is what "save state is not
 			// working" looked like. Checked here so the panel can say so.
 			if (Achievements::HardcoreModeActive()) {
-				Notice("Hardcore mode is on - save states are off");
+				Notice(psp5::Own("Hardcore mode is on - save states are off").c_str());
 				psp5::Trace("save state: refused, hardcore mode is active");
 				return;
 			}
@@ -403,7 +413,7 @@ void CheatOverlaySelect() {
 		}
 		case Kind::load: {
 			if (Achievements::HardcoreModeActive()) {
-				Notice("Hardcore mode is on - save states are off");
+				Notice(psp5::Own("Hardcore mode is on - save states are off").c_str());
 				psp5::Trace("save state: refused, hardcore mode is active");
 				return;
 			}
@@ -495,7 +505,10 @@ extern "C" void PS5_DrawOverlays(UIContext *ui) {
 	// ---- the head ----
 	ui->SetFontStyle(ui->GetTheme().uiFont);
 	ui->SetFontScale(0.52f, 0.52f);
-	ui->DrawText(psp5::g_page == psp5::Page::root ? "L2 + R2  CLOSE" : "CIRCLE  BACK", left,
+	const std::string footer = psp5::g_page == psp5::Page::root
+	                               ? "L2 + R2  " + psp5::Own("CLOSE")
+	                               : "CIRCLE  " + psp5::Own("BACK");
+	ui->DrawText(footer.c_str(), left,
 	             78.0f * scale, psp5::kPrimary, ALIGN_LEFT | ALIGN_TOP);
 	ui->SetFontScale(0.95f, 0.95f);
 	ui->DrawTextRect(psp5::PageTitle(), Bounds(left, 118.0f * scale, inner, 44.0f), psp5::kInk,

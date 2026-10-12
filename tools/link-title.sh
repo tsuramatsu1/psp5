@@ -227,6 +227,16 @@ assets="$source_dir/assets"
 [[ -d $assets ]] || { echo "error: no PPSSPP asset tree to stage" >&2; exit 2; }
 cp -a -- "$assets" "$app/assets"
 
+# psp5's own words, per language, beside PPSSPP's: assets/lang/<id>.ini is
+# PPSSPP's, assets/lang/psp5/<id>.ini is psp5's (src/ui/PS5Strings.cpp). A
+# missing file is not fatal - every key falls back to its English.
+if [[ -d $root/assets/lang/psp5 ]]; then
+	mkdir -p "$app/assets/lang/psp5"
+	cp -- "$root"/assets/lang/psp5/*.ini "$app/assets/lang/psp5/"
+	printf '==> staged %s psp5 translation file(s)
+' "$(find "$root/assets/lang/psp5" -name '*.ini' | wc -l)"
+fi
+
 # The UI kit's fonts, which the Aurora Shelf launcher loads from /app0/ui/fonts.
 # Without them the launcher cannot draw and the title falls back to PPSSPP's own
 # interface, which is a working title but not the one that was asked for.
@@ -235,7 +245,16 @@ if [[ -d $kit/assets/fonts ]]; then
 	mkdir -p "$app/ui"
 	rm -rf -- "$app/ui/fonts"
 	cp -a -- "$kit/assets/fonts" "$app/ui/fonts"
-	printf '==> staged %s kit fonts
+	# psp5 bakes its own over the top, where it has them: the kit's hold 113
+	# glyphs, essentially ASCII, so a game called "God of War(R)" drew a
+	# question mark and so did every language name not written in English.
+	# tools/make-font.py builds these from the same TTFs the kit ships.
+	if [[ -d $root/assets/fonts ]]; then
+		cp -- "$root"/assets/fonts/*.huifont "$app/ui/fonts/"
+		printf '==> staged %s psp5 fonts over the kit'"'"'s
+' 			"$(find "$root/assets/fonts" -name '*.huifont' | wc -l)"
+	fi
+	printf '==> staged %s fonts in all
 ' "$(find "$app/ui/fonts" -type f | wc -l)"
 else
 	echo "==> no kit fonts at $kit/assets/fonts; the launcher will not start"

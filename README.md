@@ -89,8 +89,10 @@ On the home screen:
 *Resume* appears in place of the cheats entry when the game has a save state,
 and boots it straight into the newest one.
 
-In the settings, **L1 / R1** turn the page — Picture, Sound, System — and left
-and right change the focused row. *Close PSP5* is at the foot of System.
+In the settings, **L1 / R1** turn the page — Picture, Sound, Controls, System —
+and left and right change the focused row. *Close PSP5* is at the foot of
+System. On Controls, **Cross** on a button row asks which console button that
+PSP button should sit on; press it, or a direction on the D-pad to leave it.
 
 In a game:
 

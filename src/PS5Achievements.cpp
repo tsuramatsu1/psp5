@@ -24,6 +24,8 @@
 #include "Common/UI/View.h"
 #include "Core/Config.h"
 #include "Core/RetroAchievements.h"
+
+#include "ui/PS5Strings.h"
 #include "ext/rcheevos/include/rc_client.h"
 
 #include "PS5Log.h"
@@ -91,24 +93,24 @@ void Rebuild() {
 	// the state behind it.
 	if (!Achievements::IsLoggedIn()) {
 		g_rows.push_back(
-			Notice("Not signed in",
-			       "Sign in from the home screen's settings, then start the "
-			       "game again."));
+			Notice(psp5::Own("Not signed in"),
+			       psp5::Own("Sign in from the home screen's settings, then start "
+			                 "the game again.")));
 		return;
 	}
 	if (Achievements::IsBlockingExecution()) {
 		g_rows.push_back(
-			Notice("Identifying this game",
-			       "Asking the server what it knows about it."));
+			Notice(psp5::Own("Identifying this game"),
+			       psp5::Own("Asking the server what it knows about it.")));
 		return;
 	}
 	if (!Achievements::IsActive()) {
 		// A game is identified when it boots, so signing in afterwards leaves
 		// this one unidentified until it is started again.
 		g_rows.push_back(
-			Notice("No achievements for this game",
-			       "Either RetroAchievements has none for it, or it was "
-			       "started before you signed in - start it again."));
+			Notice(psp5::Own("No achievements for this game"),
+			       psp5::Own("Either RetroAchievements has none for it, or it was "
+			                 "started before you signed in - start it again.")));
 		return;
 	}
 
@@ -193,8 +195,7 @@ void Rebuild() {
 
 	if (g_rows.empty()) {
 		g_rows.push_back(
-			Notice("Nothing to earn here",
-			       ""));
+			Notice(psp5::Own("Nothing to earn here"), ""));
 	}
 }
 
@@ -306,7 +307,8 @@ extern "C" void PS5_DrawAchievementsBar(UIContext *ui) {
 
 	// ---- the head ----
 	ui->SetFontScale(0.52f, 0.52f);
-	ui->DrawText("ACHIEVEMENTS", left, 78.0f * scale, psp5::kPrimary, ALIGN_LEFT | ALIGN_TOP);
+	const std::string heading = psp5::Own("ACHIEVEMENTS");
+	ui->DrawText(heading.c_str(), left, 78.0f * scale, psp5::kPrimary, ALIGN_LEFT | ALIGN_TOP);
 	ui->DrawTextRect(psp5::achievementFilterName(psp5::achievementFilter()),
 	                 Bounds(x + width - pad - 200.0f, 78.0f * scale, 200.0f, 24.0f), psp5::kInkDim,
 	                 ALIGN_RIGHT | ALIGN_TOP);

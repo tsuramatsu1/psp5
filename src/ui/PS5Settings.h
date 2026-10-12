@@ -40,7 +40,15 @@ enum class SettingKey {
 	volume,
 	menuSounds,
 	// ---- the rest ----
+	language,
 	fastForward,
+	// ---- controls ----
+	// One row that opens the button panel. The twelve buttons used to be twelve
+	// rows here, which made the Controls page mostly button rows and left the
+	// d-pad out because there was no room to argue about it.
+	mapping,
+	mappingReset,
+	usbPads,
 	hardcore,
 	replaceTextures,
 	saveNewTextures,
@@ -50,11 +58,12 @@ enum class SettingKey {
 enum class SettingCategory {
 	graphics,
 	audio,
+	controls,
 	system,
 	count,
 };
 
-const char *settingCategoryName(SettingCategory category);
+std::string settingCategoryName(SettingCategory category);
 
 // One row of the settings panel. Everything the panel draws is here as text, so
 // the screen that draws it needs none of PPSSPP's headers - the same split as
@@ -66,6 +75,9 @@ struct SettingItem {
 	std::string label;
 	std::string value;
 	std::string hint;
+	// Which one of a repeated row this is - the button, for SettingKey::mapping.
+	// Unused and zero for every other key.
+	int param = 0;
 };
 
 // A view of PPSSPP's configuration, in the few places it is worth changing from
@@ -145,6 +157,48 @@ bool MenuSoundsEnabled();
 std::string PlayedTime(const std::string &discId);
 // When this game was last started, as a UTC Unix time; 0 if it never has been.
 std::uint64_t LastPlayed(const std::string &discId);
+
+// The language PPSSPP is set to, as something readable, and the one step
+// either side of it. This is also the language the emulated PSP reports to a
+// game, which is the part most games act on.
+// Words the home screen draws outside the settings list, translated where
+// PPSSPP has the same word.
+enum class UiString {
+	settings,
+	cheats,
+	achievements,
+	saveState,
+	loadState,
+	back,
+	select,
+	play,
+	exit,
+	// ---- the shelf ----
+	recent,
+	games,
+	details,
+	gameSettings,
+	resume,
+	enableCheats,
+	gameSettings2,
+	retry,
+	cancel,
+	logOut,
+	loading,
+	off,
+	automatic,
+	unlimited,
+	// PPSSPP has no word for these, so they stay as psp5 wrote them: it has no
+	// favorites, no A-Z view and nothing it calls "added".
+	favorites,
+	alphabetical,
+	favorite,
+};
+
+std::string UiWord(UiString which);
+
+std::string LanguageLabel();
+void StepLanguage(int delta);
 std::string PlayedLabel(const std::string &discId);
 
 // Whether this game has a save state to pick up from.

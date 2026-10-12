@@ -5,6 +5,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace PS5Paths {
 
@@ -30,5 +31,22 @@ bool Prepare();
 // fopen and opendir, each with errno. For bring-up, when a read fails and the
 // reason would otherwise have to be inferred from where PPSSPP gave up.
 void Probe();
+
+// The PSP folders on the drives: /mnt/usb0/PSP .. /mnt/usb7/PSP, then
+// /mnt/ext0/PSP and /mnt/ext1/PSP, for every one that is there.
+//
+// A drive holds the same tree the title's own memory stick does, so a game
+// goes in <drive>/PSP/GAME and a texture pack in
+// <drive>/PSP/TEXTURES/<DISC_ID>/. Empty when the title is sandboxed: listing
+// a folder is what the sandbox withholds, and a drive that cannot be listed
+// has nothing psp5 can find (PS5Unlock.h).
+//
+// Read afresh rather than cached: a drive can be plugged in while the home
+// screen is up, and the shelf rescans.
+std::vector<std::string> Drives();
+
+// <drive>/PSP/TEXTURES for the drive that has a pack for this disc id, or
+// empty when none has. PPSSPP appends the disc id itself.
+std::string TexturesRoot(const std::string &discId);
 
 }  // namespace PS5Paths

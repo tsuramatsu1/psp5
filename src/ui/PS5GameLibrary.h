@@ -45,7 +45,7 @@ enum class GameView : int {
 	count,
 };
 
-const char *GameViewName(GameView view);
+std::string GameViewName(GameView view);
 
 // What the Aurora shelf shows, in place of the kit's invented catalogue.
 //

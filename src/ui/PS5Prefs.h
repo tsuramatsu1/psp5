@@ -85,6 +85,21 @@ void setReplaceTextures(bool on);
 bool saveNewTextures();
 void setSaveNewTextures(bool on);
 
+// Which console button each PSP button sits on, as "cross=circle,l=l2" -
+// only the ones moved from where they started. Empty is the default mapping.
+// Unpacked by ui/PS5Controls.cpp, which is the only thing that reads it.
+//
+// Here rather than in PPSSPP's KeyMap for the reason every other line in this
+// file is here: KeyMap is reloaded by LoadGameConfig partway through a boot, so
+// a binding kept there would hold until the first game started and no longer.
+const std::string &buttonMap();
+void setButtonMap(const std::string &packed);
+
+// Whether USB controllers the console will not pair - a wired Xbox 360 pad, a
+// PS3 pad, a DualShock 3 - are read (PS5UsbPad.cpp). On unless turned off.
+bool usbPads();
+void setUsbPads(bool on);
+
 // Reads config/psp5.txt. Called once, before the home screen is built.
 void Load();
 

@@ -16,11 +16,15 @@
 #include <algorithm>
 #include <cstdio>
 #include <iterator>
+#include <utility>
+#include <cstdint>
 #include <vector>
 
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/RetroAchievements.h"
+#include "Common/Data/Text/I18n.h"
+#include "Core/HLE/sceUtility.h"
 #include "Core/KeyMap.h"
 #include "Core/SaveState.h"
 #include "Core/System.h"
@@ -28,10 +32,46 @@
 #include "Common/File/DirListing.h"
 
 #include "PS5Log.h"
+#include "PS5Paths.h"
+#include "PS5UsbPad.h"
+#include "ui/PS5AuroraLauncher.h"
 #include "ui/PS5Prefs.h"
+#include "ui/PS5Controls.h"
+#include "ui/PS5Strings.h"
 
 namespace psp5 {
+
+// PPSSPP's own translation of a label, where it has one.
+//
+// psp5's interface is its own and none of its words are in PPSSPP's language
+// files - but most of its settings are PPSSPP's settings, named the same way,
+// and those are translated into forty-five languages already. So the rows ask
+// for PPSSPP's string and fall back to their English when a language has not
+// been given one.
+//
+// The `&` in these files marks a keyboard accelerator for the desktop builds.
+// It is not part of the word and has to come out, or a French player reads
+// "Synchronisation &verticale".
+std::string Translate(I18NCat category, const char *key, const char *fallback) {
+	std::string text(GetI18NCategory(category)->T(key, fallback));
+	text.erase(std::remove(text.begin(), text.end(), '&'), text.end());
+	return VisualOrder(text);
+}
+
 namespace {
+
+// The USB row says what it found, because "On" alone cannot tell the difference
+// between a pad that is working and a pad the console never showed us.
+std::string UsbPadHint() {
+	if (!prefs::usbPads()) {
+		return Own("Controllers the console will not pair: Xbox 360, PS3, DualShock 3.");
+	}
+	const char *found = usb_pad_name();
+	if (found == nullptr) {
+		return Own("No USB controller found. A DualSense needs nothing here.");
+	}
+	return std::string(found) + " is connected.";
+}
 
 std::string Format(const char *format, int value) {
 	char text[64];
@@ -94,11 +134,15 @@ constexpr Choice kOnOff[] = {{0, "Off"}, {1, "On"}};
 
 }  // namespace
 
-const char *settingCategoryName(SettingCategory category) {
+// The page names, which PPSSPP has in its own main settings menu.
+std::string settingCategoryName(SettingCategory category) {
 	switch (category) {
-		case SettingCategory::audio: return "Sound";
-		case SettingCategory::system: return "System";
-		default: return "Picture";
+		case SettingCategory::audio: return Translate(I18NCat::MAINSETTINGS, "Audio", "Sound");
+		case SettingCategory::controls:
+			return Translate(I18NCat::MAINSETTINGS, "Controls", "Controls");
+		case SettingCategory::system:
+			return Translate(I18NCat::MAINSETTINGS, "System", "System");
+		default: return Translate(I18NCat::MAINSETTINGS, "Graphics", "Picture");
 	}
 }
 
@@ -147,6 +191,26 @@ extern "C" bool PS5_SaveNewTextures() {
 	return psp5::prefs::saveNewTextures();
 }
 
+// Asked by PPSSPP whenever it works out where texture packs live, which it
+// does from the memory stick alone. A pack on a USB drive is at
+// <drive>/PSP/TEXTURES/<DISC_ID>/, so psp5 answers with that drive's TEXTURES
+// folder when one of them has a pack for the game being booted, and with
+// nothing when none has - PPSSPP then uses the memory stick as before.
+//
+// The disc id comes from the launch the home screen made rather than from
+// PPSSPP's own g_paramSFO, which is not loaded on every path that reaches
+// here. The returned buffer is psp5's and lives until the next call; PPSSPP
+// copies it into a Path straight away.
+extern "C" const char *PS5_TexturesRoot(void) {
+	static std::string root;
+	const std::string &discId = psp5::PendingLaunchDiscId();
+	root = PS5Paths::TexturesRoot(discId);
+	if (!root.empty()) {
+		psp5::Trace("textures: %s has a pack for %s", root.c_str(), discId.c_str());
+	}
+	return root.empty() ? nullptr : root.c_str();
+}
+
 // Asked by PPSSPP as a game boots, after it has read the game's own ini.
 extern "C" void PS5_ApplyControls() {
 	psp5::ApplyControlMapping();
@@ -188,11 +252,21 @@ std::string PlayedTime(const std::string &discId) {
 	if (discId.empty()) {
 		return std::string();
 	}
+	// PPSSPP's own sentence, which is translated into every language it
+	// ships. psp5 worded this itself for a while, because it was the one
+	// line on the home screen that followed the language and the fonts
+	// could not draw a word of Japanese. They can now, so it goes back to
+	// the translation.
+	if (g_Config.TimeTracker().GetPlayedSeconds(discId) <= 0) {
+		return std::string();
+	}
 	std::string text;
 	if (!g_Config.TimeTracker().GetPlayedTimeString(discId, &text)) {
 		return std::string();
 	}
-	return text;
+	// Straight from PPSSPP rather than through Translate, so the reordering
+	// right-to-left languages need has to be asked for here too.
+	return VisualOrder(text);
 }
 
 // The one phrase both the hero and the details sheet use, so the two cannot
@@ -200,6 +274,179 @@ std::string PlayedTime(const std::string &discId) {
 // nothing is added to it: a label in front of it said the same thing twice, and
 // the middle dot that separated them is not in the kit's font atlas - which has
 // about 113 glyphs - so it drew as a question mark.
+namespace {
+
+// What each of PPSSPP's languages is called, in English.
+//
+// langregion.ini names them in their own language - 日本語, Русский, Français -
+// and the home screen's font atlas holds about a hundred glyphs, nearly all of
+// them ASCII, so those come out as rows of question marks. The language id was
+// shown instead at first, which is unambiguous and tells a player nothing.
+//
+// An English name is a name either way, and it draws. Where a language is
+// missing from this table its native name is used if the atlas can draw it, and
+// the id only as a last resort.
+struct LanguageName {
+	const char *id;
+	const char *english;
+};
+
+constexpr LanguageName kLanguageNames[] = {
+	{"ar_AE", "Arabic"},
+	{"az_AZ", "Azerbaijani"},
+	{"be_BY", "Belarusian"},
+	{"bg_BG", "Bulgarian"},
+	{"ca_ES", "Catalan"},
+	{"cz_CZ", "Czech"},
+	{"da_DK", "Danish"},
+	{"de_DE", "German"},
+	{"dr_ID", "Indonesian (Dari)"},
+	{"en_US", "English"},
+	{"es_ES", "Spanish"},
+	{"es_LA", "Spanish (Latin America)"},
+	{"fa_IR", "Persian"},
+	{"fi_FI", "Finnish"},
+	{"fr_FR", "French"},
+	{"gl_ES", "Galician"},
+	{"gr_EL", "Greek"},
+	{"he_IL", "Hebrew"},
+	{"he_IL_invert", "Hebrew (reversed)"},
+	{"hr_HR", "Croatian"},
+	{"hu_HU", "Hungarian"},
+	{"id_ID", "Indonesian"},
+	{"it_IT", "Italian"},
+	{"ja_JP", "Japanese"},
+	{"jv_ID", "Javanese"},
+	{"ko_KR", "Korean"},
+	{"ku_SO", "Kurdish"},
+	{"lo_LA", "Lao"},
+	{"lt-LT", "Lithuanian"},
+	{"ms_MY", "Malay"},
+	{"nl_NL", "Dutch"},
+	{"no_NO", "Norwegian"},
+	{"pl_PL", "Polish"},
+	{"pt_BR", "Portuguese (Brazil)"},
+	{"pt_PT", "Portuguese"},
+	{"ro_RO", "Romanian"},
+	{"ru_RU", "Russian"},
+	{"sv_SE", "Swedish"},
+	{"tg_PH", "Tagalog"},
+	{"th_TH", "Thai"},
+	{"tr_TR", "Turkish"},
+	{"uk_UA", "Ukrainian"},
+	{"vi_VN", "Vietnamese"},
+	{"zh_CN", "Chinese (Simplified)"},
+	{"zh_TW", "Chinese (Traditional)"},
+};
+
+bool Drawable(const std::string &text) {
+	if (text.empty()) {
+		return false;
+	}
+	for (unsigned char c : text) {
+		if (c < 0x20 || c > 0x7E) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// The languages PPSSPP ships, as id and label, in a fixed order.
+const std::vector<std::pair<std::string, std::string>> &LanguageList() {
+	static std::vector<std::pair<std::string, std::string>> list;
+	if (!list.empty()) {
+		return list;
+	}
+	for (const auto &entry : GetLangValuesMapping()) {
+		const std::string &id = entry.first;
+		std::string label;
+		for (const LanguageName &known : kLanguageNames) {
+			if (id == known.id) {
+				label = known.english;
+				break;
+			}
+		}
+		if (label.empty()) {
+			label = Drawable(entry.second.first) ? entry.second.first : id;
+		}
+		list.emplace_back(id, label);
+	}
+	return list;
+}
+
+}  // namespace
+
+// A few words the home screen draws outside the settings list. Same rule: ask
+// PPSSPP, keep psp5's English when it has nothing.
+std::string UiWord(UiString which) {
+	switch (which) {
+		// Pause, not Dialog: Dialog's "Settings" is left untranslated in most of
+		// PPSSPP's language files, and the pause menu's is not.
+		case UiString::settings: return Translate(I18NCat::PAUSE, "Settings", "Settings");
+		case UiString::cheats: return Translate(I18NCat::CWCHEATS, "Cheats", "Cheats");
+		case UiString::achievements:
+			return Translate(I18NCat::ACHIEVEMENTS, "Achievements", "Achievements");
+		case UiString::saveState: return Translate(I18NCat::PAUSE, "Save State", "Save state");
+		case UiString::loadState: return Translate(I18NCat::PAUSE, "Load State", "Load state");
+		case UiString::back: return Translate(I18NCat::DIALOG, "Back", "Back");
+		case UiString::select: return Translate(I18NCat::DIALOG, "Select", "Select");
+		case UiString::play: return Translate(I18NCat::GAME, "Play", "Play");
+		case UiString::recent: return Translate(I18NCat::MAINMENU, "Recent", "Recent");
+		case UiString::games: return Translate(I18NCat::MAINMENU, "Games", "Games");
+		case UiString::details: return Translate(I18NCat::DIALOG, "Details", "Details");
+		case UiString::gameSettings:
+			return Translate(I18NCat::GAME, "Game Settings", "Game settings");
+		case UiString::resume: return Translate(I18NCat::DEVELOPER, "Resume", "Resume");
+		case UiString::enableCheats:
+			return Translate(I18NCat::SYSTEM, "Enable Cheats", "Cheats enabled");
+		case UiString::gameSettings2:
+			return Translate(I18NCat::GAME, "Game Settings", "Settings for this game");
+		case UiString::retry: return Translate(I18NCat::DIALOG, "Retry", "Retry");
+		case UiString::cancel: return Translate(I18NCat::DIALOG, "Cancel", "Cancel");
+		case UiString::logOut: return Translate(I18NCat::DIALOG, "Log out", "Sign out");
+		case UiString::loading: return Translate(I18NCat::MAINMENU, "Loading...", "Loading...");
+		case UiString::off: return Translate(I18NCat::CONTROLS, "Off", "Off");
+		case UiString::automatic: return Translate(I18NCat::AUDIO, "Auto", "Automatic");
+		case UiString::unlimited: return Translate(I18NCat::GRAPHICS, "Unlimited", "Unlimited");
+		case UiString::favorites: return Own("Favorites");
+		case UiString::alphabetical: return Own("A-Z");
+		case UiString::favorite: return Own("Favorite");
+		default: return Translate(I18NCat::DIALOG, "Exit", "Exit");
+	}
+}
+
+std::string LanguageLabel() {
+	for (const auto &entry : LanguageList()) {
+		if (entry.first == g_Config.sLanguageIni) {
+			return entry.second;
+		}
+	}
+	return g_Config.sLanguageIni.empty() ? std::string("en_US") : g_Config.sLanguageIni;
+}
+
+void StepLanguage(int delta) {
+	const std::vector<std::pair<std::string, std::string>> &list = LanguageList();
+	if (list.empty()) {
+		return;
+	}
+	int at = 0;
+	for (int i = 0; i < (int)list.size(); ++i) {
+		if (list[(std::size_t)i].first == g_Config.sLanguageIni) {
+			at = i;
+			break;
+		}
+	}
+	const int count = (int)list.size();
+	at = ((at + delta) % count + count) % count;
+	g_Config.sLanguageIni = list[(std::size_t)at].first;
+	// PPSSPP's own strings, reloaded at once. The emulated PSP reads the same
+	// setting through sceUtility when iLanguage is -1, which is its default, so
+	// this is also the language a game is told the console is set to.
+	g_i18nrepo.LoadIni(g_Config.sLanguageIni);
+	LoadOwnStrings(g_Config.sLanguageIni);
+	psp5::Trace("language: %s", g_Config.sLanguageIni.c_str());
+}
+
 std::uint64_t LastPlayed(const std::string &discId) {
 	if (discId.empty()) {
 		return 0;
@@ -209,7 +456,7 @@ std::uint64_t LastPlayed(const std::string &discId) {
 
 std::string PlayedLabel(const std::string &discId) {
 	const std::string played = PlayedTime(discId);
-	return played.empty() ? std::string("Not played yet") : played;
+	return played.empty() ? Own("Not played yet") : played;
 }
 
 bool HasSaveState(const std::string &discId) {
@@ -344,107 +591,141 @@ void Settings::Rebuild() {
 	items_.clear();
 
 	// ---- Picture ----
-	items_.push_back({SettingKey::resolution, SettingCategory::graphics, "Rendering resolution",
+	items_.push_back({SettingKey::resolution, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Rendering Resolution", "Rendering resolution"),
 	                  NameOf(kResolutions, g_Config.iInternalResolution, "%dx"),
-	                  "How much sharper than a PSP the picture is drawn."});
+	                  Own("How much sharper than a PSP the picture is drawn.")});
 
-	items_.push_back({SettingKey::filtering, SettingCategory::graphics, "Texture filtering",
+	items_.push_back({SettingKey::filtering, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Texture Filtering", "Texture filtering"),
 	                  NameOf(kFiltering, g_Config.iTexFiltering, "%d"),
-	                  "Nearest keeps the original pixels; linear smooths them."});
+	                  Own("Nearest keeps the original pixels; linear smooths them.")});
 
-	items_.push_back({SettingKey::anisotropy, SettingCategory::graphics, "Anisotropic filtering",
+	items_.push_back({SettingKey::anisotropy, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Anisotropic Filtering", "Anisotropic filtering"),
 	                  NameOf(kAnisotropy, g_Config.iAnisotropyLevel, "%d"),
-	                  "Sharpens textures seen at a steep angle, like roads and floors."});
+	                  Own("Sharpens textures seen at a steep angle, like roads and floors.")});
 
-	items_.push_back({SettingKey::upscale, SettingCategory::graphics, "Texture upscaling",
+	items_.push_back({SettingKey::upscale, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Upscale Level", "Texture upscaling"),
 	                  NameOf(kUpscale, g_Config.iTexScalingLevel, "%dx"),
-	                  "Redraws the game's textures larger, on the CPU. Costly."});
+	                  Own("Redraws the game's textures larger, on the CPU. Costly.")});
 
-	items_.push_back({SettingKey::upscaleType, SettingCategory::graphics, "Upscaling method",
+	items_.push_back({SettingKey::upscaleType, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "CPU texture upscaler (slow)", "Upscaling method"),
 	                  NameOf(kUpscaleType, g_Config.iTexScalingType, "%d"),
-	                  "xBRZ keeps edges crisp; bicubic is softer and cheaper."});
+	                  Own("xBRZ keeps edges crisp; bicubic is softer and cheaper.")});
 
-	items_.push_back({SettingKey::deposterize, SettingCategory::graphics, "Deposterize",
+	items_.push_back({SettingKey::deposterize, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Deposterize", "Deposterize"),
 	                  g_Config.bTexDeposterize ? "On" : "Off",
-	                  "Smooths the banding upscaling can leave in a gradient."});
+	                  Own("Smooths the banding upscaling can leave in a gradient.")});
 
-	items_.push_back({SettingKey::antialiasing, SettingCategory::graphics, "Antialiasing",
+	items_.push_back({SettingKey::antialiasing, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Antialiasing (MSAA)", "Antialiasing"),
 	                  NameOf(kMultiSample, g_Config.iMultiSampleLevel, "%d"),
-	                  "Softens jagged edges. Off when buffer effects are skipped."});
+	                  Own("Softens jagged edges. Off when buffer effects are skipped.")});
 
-	items_.push_back({SettingKey::smart2d, SettingCategory::graphics, "Smart 2D texture filtering",
+	items_.push_back({SettingKey::smart2d, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Smart 2D texture filtering", "Smart 2D texture filtering"),
 	                  g_Config.bSmart2DTexFiltering ? "On" : "Off",
-	                  "Leaves flat 2D art alone so menus and text stay sharp."});
+	                  Own("Leaves flat 2D art alone so menus and text stay sharp.")});
 
-	items_.push_back({SettingKey::crop16x9, SettingCategory::graphics, "Crop to 16:9",
+	items_.push_back({SettingKey::crop16x9, SettingCategory::graphics, Own("Crop to 16:9"),
 	                  g_Config.bDisplayCropTo16x9 ? "On" : "Off",
-	                  "Trims a sliver off the top and bottom to fill a widescreen."});
+	                  Own("Trims a sliver off the top and bottom to fill a widescreen.")});
 
-	items_.push_back({SettingKey::vsync, SettingCategory::graphics, "Vertical sync",
+	items_.push_back({SettingKey::vsync, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "VSync", "Vertical sync"),
 	                  g_Config.bVSync ? "On" : "Off",
-	                  "On removes tearing; off lets frames arrive as soon as they are drawn."});
+	                  Own("On removes tearing; off lets frames arrive as soon as they are drawn.")});
 
-	items_.push_back({SettingKey::frameskip, SettingCategory::graphics, "Frame skipping",
+	items_.push_back({SettingKey::frameskip, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Frame Skipping", "Frame skipping"),
 	                  g_Config.bAutoFrameSkip ? std::string("Automatic")
 	                                          : NameOf(kFrameSkip, g_Config.iFrameSkip, "%d"),
-	                  "Drops frames to keep a heavy game at speed. Off looks best."});
+	                  Own("Drops frames to keep a heavy game at speed. Off looks best.")});
 
-	items_.push_back({SettingKey::frameRate, SettingCategory::graphics, "Show frame rate",
+	items_.push_back({SettingKey::frameRate, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Show FPS Counter", "Show frame rate"),
 	                  (g_Config.iShowStatusFlags & (int)ShowStatusFlags::FPS_COUNTER) ? "On" : "Off",
-	                  "Draws the frame rate over the game."});
+	                  Own("Draws the frame rate over the game.")});
 
-	items_.push_back({SettingKey::hardwareTransform, SettingCategory::graphics, "Hardware transform",
+	items_.push_back({SettingKey::hardwareTransform, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Hardware Transform", "Hardware transform"),
 	                  g_Config.bHardwareTransform ? "On" : "Off",
-	                  "Transforms geometry on the GPU. Off is slower and more accurate."});
+	                  Own("Transforms geometry on the GPU. Off is slower and more accurate.")});
 
-	items_.push_back({SettingKey::softwareSkinning, SettingCategory::graphics, "Software skinning",
+	items_.push_back({SettingKey::softwareSkinning, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Software Skinning", "Software skinning"),
 	                  g_Config.bSoftwareSkinning ? "On" : "Off",
-	                  "Animates characters on the CPU. Faster in most games."});
+	                  Own("Animates characters on the CPU. Faster in most games.")});
 
-	items_.push_back({SettingKey::lazyTextures, SettingCategory::graphics, "Lazy texture caching",
+	items_.push_back({SettingKey::lazyTextures, SettingCategory::graphics,
+	                  Translate(I18NCat::GRAPHICS, "Lazy texture caching",
+	                            "Lazy texture caching"),
 	                  g_Config.bTextureBackoffCache ? "On" : "Off",
-	                  "Rechecks textures less often. Faster, and wrong in a few games."});
+	                  Own("Rechecks textures less often. Faster, and wrong in a few games.")});
 
-	items_.push_back({SettingKey::skipBufferEffects, SettingCategory::graphics, "Skip buffer effects",
+	items_.push_back({SettingKey::skipBufferEffects, SettingCategory::graphics, Translate(I18NCat::GRAPHICS, "Skip Buffer Effects", "Skip buffer effects"),
 	                  g_Config.bSkipBufferEffects ? "On" : "Off",
-	                  "Much faster, and drops the effects some games draw off-screen."});
+	                  Own("Much faster, and drops the effects some games draw off-screen.")});
 
 	// ---- Sound ----
-	items_.push_back({SettingKey::sound, SettingCategory::audio, "Sound", g_Config.bEnableSound ? "On" : "Off",
-	                  "Audio from the emulator."});
+	items_.push_back({SettingKey::sound, SettingCategory::audio, Translate(I18NCat::AUDIO, "Enable Sound", "Sound"), g_Config.bEnableSound ? "On" : "Off",
+	                  Own("Audio from the emulator.")});
 
-	items_.push_back({SettingKey::volume, SettingCategory::audio, "Game volume",
-	                  Format("%d", g_Config.iGameVolume), "0 to 100, in steps of five."});
+	items_.push_back({SettingKey::volume, SettingCategory::audio, Translate(I18NCat::AUDIO, "Game volume", "Game volume"),
+	                  Format("%d", g_Config.iGameVolume), Own("0 to 100, in steps of five.")});
 
 	if (!scopedToGame()) {
-		items_.push_back({SettingKey::menuSounds, SettingCategory::audio, "Menu sounds",
+		items_.push_back({SettingKey::menuSounds, SettingCategory::audio,
+		                  Translate(I18NCat::AUDIO, "UI sound", "Menu sounds"),
 		                  prefs::soundSetLabel(prefs::soundSet()),
-		                  "The home screen's own sounds. A game's music is separate."});
+		                  Own("The home screen's own sounds. A game's music is separate.")});
+	}
+
+	// ---- Controls ----
+	//
+	// What a game is sent. The home screen and the in-game menu read the pad
+	// directly, so Cross still chooses and Circle still goes back whatever is
+	// set here - which is the point: a mapping that could lock someone out of
+	// the panel that made it is a mapping worth not having.
+	// psp5 keeps one mapping for the whole title, as it keeps one of each of
+	// the switches below, so these are shown only in the title's own panel. In
+	// a game's they would read as that game's and change every game - which is
+	// the mistake the cheats switch and the texture rows already made once.
+	if (!scopedToGame()) {
+		items_.push_back({SettingKey::mapping, SettingCategory::controls, Own("Buttons"),
+		                  controls::IsDefault() ? Own("Default") : Own("Changed"),
+		                  Own("Which console button each of the PSP's is on.")});
+
+		items_.push_back({SettingKey::mappingReset, SettingCategory::controls,
+		                  Own("Reset the buttons"),
+		                  controls::IsDefault() ? Own("Default") : Own("Changed"),
+		                  Own("Puts all twelve back where they started.")});
+
+		items_.push_back({SettingKey::usbPads, SettingCategory::controls, Own("USB controllers"),
+		                  prefs::usbPads() ? "On" : "Off", UsbPadHint()});
 	}
 
 	// ---- System ----
-	items_.push_back({SettingKey::fastForward, SettingCategory::system, "Fast-forward speed",
+	items_.push_back({SettingKey::language, SettingCategory::system, Translate(I18NCat::SYSTEM, "Language", "Language"),
+	                  LanguageLabel(),
+	                  Own("What a game is told the console's language is, and PPSSPP's own text.")});
+
+	items_.push_back({SettingKey::fastForward, SettingCategory::controls,
+	                  Translate(I18NCat::MAPPABLECONTROLS, "Fast-forward",
+	                            "Fast-forward speed"),
 	                  g_Config.iAnalogFpsLimit <= 0 ? std::string("Unlimited")
 	                                                : Format("%d%%", g_Config.iAnalogFpsLimit),
-	                  "How fast the game runs while the right trigger is held."});
+	                  Own("How fast the game runs while the right trigger is held.")});
 
 	// psp5's own settings, and psp5 keeps one of each for the whole title - it
 	// has nowhere to put a second. Shown only in the title's panel: in a game's
 	// they looked per-game and were not, so changing one there changed it
 	// everywhere, which is exactly what it appeared not to do.
 	if (!scopedToGame()) {
-		items_.push_back({SettingKey::hardcore, SettingCategory::system, "Achievements hardcore mode",
+		items_.push_back({SettingKey::hardcore, SettingCategory::system,
+		                  Translate(I18NCat::ACHIEVEMENTS, "Hardcore Mode",
+		                            "Achievements hardcore mode"),
 		                  prefs::hardcore() ? "On" : "Off",
-		                  "On earns hardcore unlocks but turns off save states entirely."});
+		                  Own("On earns hardcore unlocks but turns off save states entirely.")});
 
-		items_.push_back({SettingKey::replaceTextures, SettingCategory::system, "Texture replacement",
+		items_.push_back({SettingKey::replaceTextures, SettingCategory::system, Translate(I18NCat::DEVELOPER, "Texture Replacement", "Texture replacement"),
 		                  prefs::replaceTextures() ? "On" : "Off",
-		                  "Uses a pack from PSP/TEXTURES/<GAMEID>/ when a game has one."});
+		                  Own("Uses a pack from PSP/TEXTURES/<GAMEID>/ when a game has one.")});
 
-		items_.push_back({SettingKey::saveNewTextures, SettingCategory::system, "Save new textures",
+		items_.push_back({SettingKey::saveNewTextures, SettingCategory::system, Translate(I18NCat::DEVELOPER, "Save new textures", "Save new textures"),
 		                  prefs::saveNewTextures() ? "On" : "Off",
-		                  "Writes what a game draws to PSP/TEXTURES/<GAMEID>/new/, to build "
-		                  "a pack."});
+		                  Own("Writes what a game draws to PSP/TEXTURES/<GAMEID>/new/, to build a pack.")});
 	}
 }
 
@@ -602,6 +883,9 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			prefs::setSoundSet(at == 0 ? std::string() : sets[(std::size_t)(at - 1)]);
 			break;
 		}
+		case SettingKey::language:
+			StepLanguage(delta);
+			break;
 		case SettingKey::fastForward: {
 			// 0 means unlimited, and it sits past the top of the range rather
 			// than at the bottom, where it would be reached by slowing down.
@@ -615,6 +899,27 @@ bool Settings::Adjust(std::size_t index, int delta) {
 			g_Config.iAnalogFpsLimit = limit;
 			break;
 		}
+		case SettingKey::mapping:
+			// Opening the panel is the screen's business (ui/kit/aurora.cpp):
+			// left and right have nothing to step here.
+			return false;
+		case SettingKey::mappingReset:
+			if (controls::IsDefault()) {
+				return false;
+			}
+			controls::Reset();
+			break;
+		case SettingKey::usbPads:
+			prefs::setUsbPads(!prefs::usbPads());
+			// Started here as well as at boot, so turning it on works without
+			// closing the title; turning it off stops the thread and lets go of
+			// the device, which is the half that matters.
+			if (prefs::usbPads()) {
+				usb_pad_start();
+			} else {
+				usb_pad_stop();
+			}
+			break;
 		case SettingKey::hardcore:
 			prefs::setHardcore(!prefs::hardcore());
 			break;

@@ -32,7 +32,7 @@ AchievementFilter achievementFilter();
 void setAchievementFilter(AchievementFilter filter);
 // Steps the filter by delta, wrapping. Returns what it landed on.
 AchievementFilter stepAchievementFilter(int delta);
-const char *achievementFilterName(AchievementFilter filter);
+std::string achievementFilterName(AchievementFilter filter);
 // Whether a row survives the filter. Headers are kept by the caller only when
 // something under them did.
 bool achievementPasses(bool unlocked, AchievementFilter filter);

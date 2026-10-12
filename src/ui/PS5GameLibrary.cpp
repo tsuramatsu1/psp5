@@ -346,11 +346,11 @@ Color FromHsv(float h, float s, float v) {
 
 }  // namespace
 
-const char *GameViewName(GameView view) {
+std::string GameViewName(GameView view) {
 	switch (view) {
-		case GameView::recent: return "Recent";
-		case GameView::alphabetical: return "A-Z";
-		case GameView::favorites: return "Favorites";
+		case GameView::recent: return UiWord(UiString::recent);
+		case GameView::alphabetical: return UiWord(UiString::alphabetical);
+		case GameView::favorites: return UiWord(UiString::favorites);
 		default: return "";
 	}
 }
@@ -381,6 +381,18 @@ void GameLibrary::Scan() {
 	};
 	std::vector<Pending> pending;
 	pending.push_back({PS5Paths::Memstick(), 0});
+	// The drives, under the same tree the title's own memory stick uses, so a
+	// game is at <drive>/PSP/GAME. Nothing comes back when psp5 is sandboxed:
+	// a folder that cannot be listed holds nothing psp5 can find, which is why
+	// PS5_Unlock runs before anything else (PS5Unlock.h).
+	//
+	// The depth starts at one, not zero. These roots are already the PSP folder
+	// rather than the stick above it, and starting at zero would let the walk
+	// one level deeper on a drive than on the memory stick - which on a drive
+	// full of other things is a long walk for nothing.
+	for (const std::string &drive : PS5Paths::Drives()) {
+		pending.push_back({drive, 1});
+	}
 
 	while (!pending.empty() && entries_.size() < kMaxGames) {
 		const Pending here = pending.back();

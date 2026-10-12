@@ -14,6 +14,7 @@
 // function that returns a list.
 
 #include "ui/PS5GameAchievements.h"
+#include "ui/PS5Strings.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -54,11 +55,11 @@ AchievementFilter stepAchievementFilter(int delta) {
 	return g_filter;
 }
 
-const char *achievementFilterName(AchievementFilter filter) {
+std::string achievementFilterName(AchievementFilter filter) {
 	switch (filter) {
-		case AchievementFilter::locked: return "LOCKED";
-		case AchievementFilter::unlocked: return "UNLOCKED";
-		default: return "ALL";
+		case AchievementFilter::locked: return Own("LOCKED");
+		case AchievementFilter::unlocked: return Own("UNLOCKED");
+		default: return Own("ALL");
 	}
 }
 

@@ -9,6 +9,7 @@
  * smoke test runs with; no SDK header declares them.
  */
 #include "platform.h"
+#include "PS5UsbPad.h"
 
 #include <ps5platform/klog.h>
 
@@ -136,7 +137,13 @@ static int32_t pad_unopened = -1;
 static struct pad_player_state *
 pad_state(int player)
 {
-   if (!pad_service || player < 0 || player >= PAD_PLAYERS || pad_states[player].handle < 0)
+   if (player < 0 || player >= PAD_PLAYERS)
+      return NULL;
+   /* A USB pad with no controller of the console's own: player one exists even
+    * though scePadOpen never gave a handle for them. */
+   if (player == 0 && pad_states[0].handle < 0 && pad_states[0].connected)
+      return &pad_states[0];
+   if (!pad_service || pad_states[player].handle < 0)
       return NULL;
    return &pad_states[player];
 }
@@ -258,7 +265,7 @@ static void
 pad_fill(const struct pad_player_state *state, struct pad *pad)
 {
    const uint32_t before = pad->held;
-   pad->held = state->handle >= 0 ? state->last.buttons : 0;
+   pad->held = state->handle >= 0 || state->connected ? state->last.buttons : 0;
    pad->pressed = pad->held & ~before;
    pad->left_x = stick(state->last.left_x);
    pad->left_y = stick(state->last.left_y);
@@ -266,6 +273,56 @@ pad_fill(const struct pad_player_state *state, struct pad *pad)
    pad->right_y = stick(state->last.right_y);
    pad->l2 = state->last.l2 / 255.0f;
    pad->r2 = state->last.r2 / 255.0f;
+}
+
+/* A USB controller the console does not take as one of its own, folded into
+ * player one's state (PS5UsbPad.cpp). Added rather than substituted: a button
+ * held on either is held, and a stick is the USB pad's only while it is pushed,
+ * so an Xbox pad and a DualSense can be used by two people on one PSP, and a
+ * DualSense that is not there leaves the USB pad alone in charge.
+ *
+ * The sticks' window is wider than the dead zone PPSSPP cuts: a third-party
+ * pad that rests at 126 rather than 128 would otherwise hold player one's
+ * stick off centre for as long as it was plugged in. */
+static void
+pad_merge_usb(struct pad_player_state *state)
+{
+   struct usb_pad_state usb;
+   if (!usb_pad_read(&usb)) {
+      if (state->handle < 0)
+         state->connected = false;
+      return;
+   }
+   if (state->handle < 0) {
+      /* Nothing of the console's own to merge with: the USB pad is player one
+       * on its own, and its state is taken rather than added. Adding it would
+       * never let a button go - the read loop above skips a player with no
+       * handle, so last.buttons is not refreshed between polls and every press
+       * would stay held for as long as the title ran. */
+      memset(&state->last, 0, sizeof(state->last));
+      state->last.buttons = usb.buttons;
+      state->last.l2 = usb.l2;
+      state->last.r2 = usb.r2;
+      state->last.left_x = usb.lx;
+      state->last.left_y = usb.ly;
+      state->last.right_x = usb.rx;
+      state->last.right_y = usb.ry;
+      state->connected = true;
+      return;
+   }
+   state->last.buttons |= usb.buttons;
+   if (usb.l2 > state->last.l2)
+      state->last.l2 = usb.l2;
+   if (usb.r2 > state->last.r2)
+      state->last.r2 = usb.r2;
+   if (usb.lx < 118 || usb.lx > 138)
+      state->last.left_x = usb.lx;
+   if (usb.ly < 118 || usb.ly > 138)
+      state->last.left_y = usb.ly;
+   if (usb.rx < 118 || usb.rx > 138)
+      state->last.right_x = usb.rx;
+   if (usb.ry < 118 || usb.ry > 138)
+      state->last.right_y = usb.ry;
 }
 
 void
@@ -278,7 +335,7 @@ pad_poll(struct pad *pad)
    static struct pad_sample samples[64];
    for (int player = 0; player < PAD_PLAYERS; player++) {
       struct pad_player_state *state = pad_state(player);
-      if (state == NULL)
+      if (state == NULL || state->handle < 0)
          continue;
       state->taken_count = 0;
       const int count = scePadRead(state->handle, samples, 64);
@@ -294,6 +351,9 @@ pad_poll(struct pad *pad)
             state->last = *s;
       }
    }
+   /* Player one only: the PSP has one controller, and a second USB pad has
+    * nowhere to go that the console's own players do not already fill. */
+   pad_merge_usb(&pad_states[0]);
    (void)pad_player(0, pad);
 }
 
