@@ -992,6 +992,45 @@ assert t.count(old) == 1, "tracker body anchor"
 t = t.replace(old, new, 1)
 write(p, t)
 
+# ---- FileUtil.cpp: folders a PC can delete again ---------------------------
+#
+# Everything the title writes is under /app0, which is /data/homebrew/<TITLE_ID>
+# to anything else on the console, and the FTP server that reaches it is another
+# process. Deleting a folder needs write permission on that folder, so every
+# directory PPSSPP made - a game's SAVEDATA, its save states, PSP/SYSTEM, a
+# texture dump - was one nothing else could remove, and the folder holding them
+# could not be removed either while they were still in it.
+#
+# psp5's own folders never had this: PS5Paths::EnsureDir chmods each one after
+# making it, which is exactly what this does for the folders PPSSPP makes while
+# a game runs.
+#
+# The chmod is the point, not the mode on the mkdir. mkdir's mode is masked by
+# the process umask, so 0777 can still land as 0755 and the console's libc
+# exports no umask to clear - the link stops on it as an undefined symbol. chmod
+# takes no notice of the umask, so the folder ends up as asked either way.
+p = D / 'Common/File/FileUtil.cpp'
+t = p.read_text()
+old = """	if (mkdir(path.ToString().c_str(), 0755) == 0) {
+		return true;
+	}"""
+new = """#if PPSSPP_PLATFORM(PS5)
+	if (mkdir(path.ToString().c_str(), 0777) == 0) {
+		// See the note in tools/mkpatch.py: a folder the console's FTP server
+		// cannot write to is a folder nobody can delete from a PC, and mkdir's
+		// mode alone does not get there through the umask.
+		chmod(path.ToString().c_str(), 0777);
+		return true;
+	}
+#else
+	if (mkdir(path.ToString().c_str(), 0755) == 0) {
+		return true;
+	}
+#endif"""
+assert t.count(old) == 1, "mkdir anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
 print("edits applied")
 
 

@@ -89,8 +89,20 @@ struct SettingItem {
 // home screen does not exist then.
 class Settings {
 public:
-	// Reads PPSSPP's current configuration into the rows.
+	// Reads PPSSPP's current configuration into the rows, as a panel that is
+	// being opened. Anything typed into the previous one is forgotten.
 	void Reload();
+
+	// The same, for a panel that is already open and has just changed
+	// something outside these rows - a button binding. Those write themselves
+	// immediately, but their row still shows what it showed before, so the
+	// rows are built again.
+	//
+	// Not Reload(), which also clears the flag that says something here is
+	// waiting to be written. A player who had moved a setting and then went
+	// and rebound a button lost the first change on the way out, because the
+	// panel no longer believed there was anything to save.
+	void Refresh();
 
 	std::span<const SettingItem> items() const { return items_; }
 	std::size_t size() const { return items_.size(); }

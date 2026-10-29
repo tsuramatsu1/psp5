@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 910f32214..f5b0f80e8 100644
+index 8e18a1387..5ac4d0918 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -282,6 +282,27 @@ endif()
@@ -30,7 +30,7 @@ index 910f32214..f5b0f80e8 100644
  
  # Made this flag negative because it's hopefully quite temporary and didn't
  # want to have to update all build systems.
-@@ -1498,6 +1519,21 @@ elseif(WIN32)
+@@ -1506,6 +1527,21 @@ elseif(WIN32)
  	# Don't care about SDL.
  	set(TargetBin PPSSPPWindows)
  elseif(LIBRETRO)
@@ -52,7 +52,7 @@ index 910f32214..f5b0f80e8 100644
  else()
  	if(GOLD)
  		set(TargetBin PPSSPPGold)
-@@ -3019,6 +3055,85 @@ if(LIBRETRO)
+@@ -3031,6 +3067,85 @@ if(LIBRETRO)
  	add_subdirectory(libretro)
  endif()
  
@@ -138,11 +138,36 @@ index 910f32214..f5b0f80e8 100644
  if(TargetBin)
  	if(APPLE)
  		if(NOT IOS)
+diff --git a/Common/File/FileUtil.cpp b/Common/File/FileUtil.cpp
+index 53a86f54f..9854e4083 100644
+--- a/Common/File/FileUtil.cpp
++++ b/Common/File/FileUtil.cpp
+@@ -685,10 +685,20 @@ bool CreateDir(const Path &path) {
+ 	}
+ 	ERROR_LOG(Log::IO, "CreateDir: CreateDirectory failed on %s: %08x %s", path.c_str(), (uint32_t)error, GetStringErrorMsg(error).c_str());
+ 	return false;
++#else
++#if PPSSPP_PLATFORM(PS5)
++	if (mkdir(path.ToString().c_str(), 0777) == 0) {
++		// See the note in tools/mkpatch.py: a folder the console's FTP server
++		// cannot write to is a folder nobody can delete from a PC, and mkdir's
++		// mode alone does not get there through the umask.
++		chmod(path.ToString().c_str(), 0777);
++		return true;
++	}
+ #else
+ 	if (mkdir(path.ToString().c_str(), 0755) == 0) {
+ 		return true;
+ 	}
++#endif
+ 
+ 	int err = errno;
+ 	if (err == EEXIST) {
 diff --git a/Common/GPU/Vulkan/VulkanContext.cpp b/Common/GPU/Vulkan/VulkanContext.cpp
-index 9b384731e..843cbcf4c 100644
+index 4c761c842..522904189 100644
 --- a/Common/GPU/Vulkan/VulkanContext.cpp
 +++ b/Common/GPU/Vulkan/VulkanContext.cpp
-@@ -1116,6 +1116,24 @@ VkResult VulkanContext::ReinitSurface() {
+@@ -1119,6 +1119,24 @@ VkResult VulkanContext::ReinitSurface() {
  			}
  		}
  

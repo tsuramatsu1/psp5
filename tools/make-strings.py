@@ -1787,6 +1787,126 @@ add("Press the console button you want it on. Waiting",
     zh_CN="按下你想要的主机按键。等待", zh_TW="按下你想要的主機按鍵。等待")
 
 
+# ---- search ---------------------------------------------------------------
+
+add("Search",
+    ar_AE="بحث", az_AZ="Axtarış", be_BY="Пошук", bg_BG="Търсене",
+    ca_ES="Cerca", cz_CZ="Hledat", da_DK="Søg", de_DE="Suche",
+    dr_ID="Cari", es_ES="Buscar", es_LA="Buscar", fa_IR="جستجو",
+    fi_FI="Haku", fr_FR="Rechercher", gl_ES="Buscar", gr_EL="Αναζήτηση",
+    he_IL="חיפוש", he_IL_invert="חיפוש", hr_HR="Pretraži", hu_HU="Keresés",
+    id_ID="Cari", it_IT="Cerca", ja_JP="検索", jv_ID="Golek", ko_KR="검색",
+    ku_SO="گەڕان", lo_LA="ຄົ້ນຫາ", lt_LT="Paieška", ms_MY="Cari",
+    nl_NL="Zoeken", no_NO="Søk", pl_PL="Szukaj", pt_BR="Buscar",
+    pt_PT="Pesquisar", ro_RO="Caută", ru_RU="Поиск", sv_SE="Sök",
+    tg_PH="Maghanap", th_TH="ค้นหา", tr_TR="Ara", uk_UA="Пошук",
+    vi_VN="Tìm kiếm", zh_CN="搜索", zh_TW="搜尋")
+
+add("SEARCH",
+    ar_AE="بحث", az_AZ="AXTARIŞ", be_BY="ПОШУК", bg_BG="ТЪРСЕНЕ",
+    ca_ES="CERCA", cz_CZ="HLEDAT", da_DK="SØG", de_DE="SUCHE",
+    dr_ID="CARI", es_ES="BUSCAR", es_LA="BUSCAR", fa_IR="جستجو",
+    fi_FI="HAKU", fr_FR="RECHERCHER", gl_ES="BUSCAR", gr_EL="ΑΝΑΖΗΤΗΣΗ",
+    he_IL="חיפוש", he_IL_invert="חיפוש", hr_HR="PRETRAŽI", hu_HU="KERESÉS",
+    id_ID="CARI", it_IT="CERCA", ja_JP="検索", jv_ID="GOLEK", ko_KR="검색",
+    ku_SO="گەڕان", lo_LA="ຄົ້ນຫາ", lt_LT="PAIEŠKA", ms_MY="CARI",
+    nl_NL="ZOEKEN", no_NO="SØK", pl_PL="SZUKAJ", pt_BR="BUSCAR",
+    pt_PT="PESQUISAR", ro_RO="CAUTĂ", ru_RU="ПОИСК", sv_SE="SÖK",
+    tg_PH="MAGHANAP", th_TH="ค้นหา", tr_TR="ARA", uk_UA="ПОШУК",
+    vi_VN="TÌM KIẾM", zh_CN="搜索", zh_TW="搜尋")
+
+add("Game",
+    ar_AE="لعبة", az_AZ="Oyun", be_BY="Гульня", bg_BG="Игра", ca_ES="Joc",
+    cz_CZ="Hra", da_DK="Spil", de_DE="Spiel", dr_ID="Permainan",
+    es_ES="Juego", es_LA="Juego", fa_IR="بازی", fi_FI="Peli", fr_FR="Jeu",
+    gl_ES="Xogo", gr_EL="Παιχνίδι", he_IL="משחק", he_IL_invert="משחק",
+    hr_HR="Igra", hu_HU="Játék", id_ID="Permainan", it_IT="Gioco",
+    ja_JP="ゲーム", jv_ID="Dolanan", ko_KR="게임", ku_SO="یاری", lo_LA="ເກມ",
+    lt_LT="Žaidimas", ms_MY="Permainan", nl_NL="Spel", no_NO="Spill",
+    pl_PL="Gra", pt_BR="Jogo", pt_PT="Jogo", ro_RO="Joc", ru_RU="Игра",
+    sv_SE="Spel", tg_PH="Laro", th_TH="เกม", tr_TR="Oyun", uk_UA="Гра",
+    vi_VN="Trò chơi", zh_CN="游戏", zh_TW="遊戲")
+
+add("Clear search",
+    ar_AE="مسح البحث", az_AZ="Axtarışı təmizlə", be_BY="Ачысціць пошук",
+    bg_BG="Изчисти търсенето", ca_ES="Esborra la cerca", cz_CZ="Zrušit hledání",
+    da_DK="Ryd søgning", de_DE="Suche löschen", dr_ID="Hapus pencarian",
+    es_ES="Borrar búsqueda", es_LA="Borrar búsqueda", fa_IR="پاک کردن جستجو",
+    fi_FI="Tyhjennä haku", fr_FR="Effacer la recherche", gl_ES="Borrar a busca",
+    gr_EL="Καθαρισμός αναζήτησης", he_IL="נקה חיפוש", he_IL_invert="נקה חיפוש",
+    hr_HR="Očisti pretragu", hu_HU="Keresés törlése", id_ID="Hapus pencarian",
+    it_IT="Cancella ricerca", ja_JP="検索をクリア", jv_ID="Busak panggolekan",
+    ko_KR="검색 지우기", ku_SO="پاککردنەوەی گەڕان", lo_LA="ລ້າງການຄົ້ນຫາ",
+    lt_LT="Išvalyti paiešką", ms_MY="Kosongkan carian", nl_NL="Zoekopdracht wissen",
+    no_NO="Tøm søk", pl_PL="Wyczyść wyszukiwanie", pt_BR="Limpar busca",
+    pt_PT="Limpar pesquisa", ro_RO="Șterge căutarea", ru_RU="Очистить поиск",
+    sv_SE="Rensa sökning", tg_PH="Burahin ang paghahanap", th_TH="ล้างการค้นหา",
+    tr_TR="Aramayı temizle", uk_UA="Очистити пошук", vi_VN="Xóa tìm kiếm",
+    zh_CN="清除搜索", zh_TW="清除搜尋")
+
+add("No matches",
+    ar_AE="لا توجد نتائج", az_AZ="Nəticə yoxdur", be_BY="Нічога не знойдзена",
+    bg_BG="Няма съвпадения", ca_ES="Cap coincidència", cz_CZ="Žádné výsledky",
+    da_DK="Ingen resultater", de_DE="Keine Treffer", dr_ID="Tidak ada hasil",
+    es_ES="Sin resultados", es_LA="Sin resultados", fa_IR="نتیجه‌ای یافت نشد",
+    fi_FI="Ei osumia", fr_FR="Aucun résultat", gl_ES="Sen resultados",
+    gr_EL="Κανένα αποτέλεσμα", he_IL="אין תוצאות", he_IL_invert="אין תוצאות",
+    hr_HR="Nema rezultata", hu_HU="Nincs találat", id_ID="Tidak ada hasil",
+    it_IT="Nessun risultato", ja_JP="該当なし", jv_ID="Ora ana asil",
+    ko_KR="검색 결과 없음", ku_SO="هیچ ئەنجامێک نییە", lo_LA="ບໍ່ພົບຜົນລັບ",
+    lt_LT="Nėra atitikmenų", ms_MY="Tiada hasil", nl_NL="Geen resultaten",
+    no_NO="Ingen treff", pl_PL="Brak wyników", pt_BR="Nenhum resultado",
+    pt_PT="Sem resultados", ro_RO="Niciun rezultat", ru_RU="Ничего не найдено",
+    sv_SE="Inga träffar", tg_PH="Walang resulta", th_TH="ไม่พบรายการ",
+    tr_TR="Sonuç yok", uk_UA="Нічого не знайдено", vi_VN="Không có kết quả",
+    zh_CN="没有匹配项", zh_TW="沒有符合的項目")
+
+add("Press Circle to clear the search, or the left stick to change it.",
+    ar_AE="اضغط دائرة لمسح البحث، أو العصا اليسرى لتغييره.",
+    az_AZ="Axtarışı təmizləmək üçün Dairəyə, dəyişmək üçün sol çubuğa basın.",
+    be_BY="Націсніце Круг, каб ачысціць пошук, або левы стык, каб змяніць яго.",
+    bg_BG="Натиснете Кръг, за да изчистите търсенето, или левия стик, за да го промените.",
+    ca_ES="Prem Cercle per esborrar la cerca, o la palanca esquerra per canviar-la.",
+    cz_CZ="Stiskněte Kolečko pro zrušení hledání nebo levou páčku pro jeho změnu.",
+    da_DK="Tryk på Cirkel for at rydde søgningen, eller venstre stik for at ændre den.",
+    de_DE="Drücke Kreis, um die Suche zu löschen, oder den linken Stick, um sie zu ändern.",
+    dr_ID="Tekan Lingkaran untuk menghapus pencarian, atau stik kiri untuk mengubahnya.",
+    es_ES="Pulsa Círculo para borrar la búsqueda, o el stick izquierdo para cambiarla.",
+    es_LA="Presiona Círculo para borrar la búsqueda, o el stick izquierdo para cambiarla.",
+    fa_IR="برای پاک کردن جستجو دکمه دایره و برای تغییر آن استیک چپ را فشار دهید.",
+    fi_FI="Tyhjennä haku painamalla Ympyrää tai muuta sitä vasemmalla sauvalla.",
+    fr_FR="Appuie sur Rond pour effacer la recherche, ou sur le stick gauche pour la modifier.",
+    gl_ES="Preme Círculo para borrar a busca, ou a panca esquerda para cambiala.",
+    gr_EL="Πάτησε Κύκλο για καθαρισμό της αναζήτησης ή τον αριστερό μοχλό για αλλαγή.",
+    he_IL="לחץ עיגול כדי לנקות את החיפוש, או על המקל השמאלי כדי לשנות אותו.",
+    he_IL_invert="לחץ עיגול כדי לנקות את החיפוש, או על המקל השמאלי כדי לשנות אותו.",
+    hr_HR="Pritisni Krug za brisanje pretrage ili lijevu palicu za promjenu.",
+    hu_HU="Nyomd meg a Kört a keresés törléséhez, vagy a bal kart a módosításához.",
+    id_ID="Tekan Lingkaran untuk menghapus pencarian, atau stik kiri untuk mengubahnya.",
+    it_IT="Premi Cerchio per cancellare la ricerca, o la levetta sinistra per cambiarla.",
+    ja_JP="○ボタンで検索をクリア、左スティック押し込みで変更します。",
+    jv_ID="Pencet Bunder kanggo mbusak panggolekan, utawa stik kiwa kanggo ngganti.",
+    ko_KR="○ 버튼으로 검색을 지우고, 왼쪽 스틱으로 변경합니다.",
+    ku_SO="دوگمەی بازنە بۆ پاککردنەوەی گەڕان، یان ستیکی چەپ بۆ گۆڕینی.",
+    lo_LA="ກົດວົງກົມເພື່ອລ້າງການຄົ້ນຫາ ຫຼື ກ້ານຊ້າຍເພື່ອປ່ຽນ.",
+    lt_LT="Spausk Apskritimą paieškai išvalyti arba kairę svirtelę jai pakeisti.",
+    ms_MY="Tekan Bulatan untuk mengosongkan carian, atau kayu bedik kiri untuk mengubahnya.",
+    nl_NL="Druk op Cirkel om de zoekopdracht te wissen, of op de linkerstick om hem te wijzigen.",
+    no_NO="Trykk Sirkel for å tømme søket, eller venstre stikke for å endre det.",
+    pl_PL="Naciśnij Kółko, aby wyczyścić wyszukiwanie, lub lewą gałkę, aby je zmienić.",
+    pt_BR="Pressione Círculo para limpar a busca, ou o analógico esquerdo para alterá-la.",
+    pt_PT="Prime Círculo para limpar a pesquisa, ou o analógico esquerdo para a alterar.",
+    ro_RO="Apasă Cerc pentru a șterge căutarea sau stickul stâng pentru a o schimba.",
+    ru_RU="Нажмите Круг, чтобы очистить поиск, или левый стик, чтобы изменить его.",
+    sv_SE="Tryck på Cirkel för att rensa sökningen, eller vänster spak för att ändra den.",
+    tg_PH="Pindutin ang Bilog para burahin ang paghahanap, o ang kaliwang stick para baguhin ito.",
+    th_TH="กดปุ่มวงกลมเพื่อล้างการค้นหา หรือกดสติ๊กซ้ายเพื่อเปลี่ยน",
+    tr_TR="Aramayı temizlemek için Daire'ye, değiştirmek için sol çubuğa bas.",
+    uk_UA="Натисніть Коло, щоб очистити пошук, або лівий стик, щоб змінити його.",
+    vi_VN="Nhấn Vòng tròn để xóa tìm kiếm, hoặc cần gạt trái để thay đổi.",
+    zh_CN="按圆圈键清除搜索，按左摇杆更改。", zh_TW="按圓圈鍵清除搜尋，按左搖桿變更。")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="assets/lang/psp5", type=pathlib.Path)
@@ -1801,8 +1921,11 @@ def main():
             value = by_language.get(lookup)
             if value:
                 lines.append("%s = %s" % (english, value))
+        # newline="\n": without it Python rewrites every \n as the host's own
+        # ending, so a run on Windows leaves a carriage return on the end of
+        # every translation - which the title then draws.
         (args.out / ("%s.ini" % code)).write_text("\n".join(lines) + "\n",
-                                                  encoding="utf-8")
+                                                  encoding="utf-8", newline="\n")
     print("%d languages x %d strings -> %s" % (len(LANGUAGES), len(T), args.out))
 
 

@@ -619,6 +619,10 @@ bool RunAuroraLauncher(const AuroraDevice &gpu) {
 			}
 		}
 		GameSoundPlayer().Update(mixer, dt);
+		// Covers the worker has read become textures here, where the renderer
+		// is, and the ones that have fallen off the shelf are given back. The
+		// shelf itself only ever asks (GameLibrary::Want).
+		psp5::Library().PumpCovers(renderer, fonts);
 		// Achievement badges that have arrived become textures here, where the
 		// renderer is; the view that holds them never sees one.
 		psp5::GameAchievementList().UploadBadges([&renderer](const psp5::Artwork &art) {

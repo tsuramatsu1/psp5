@@ -44,12 +44,14 @@
 #include "ui/PS5GameLibrary.h"
 #include "ui/PS5GameSound.h"
 #include "ui/PS5Keyboard.h"
+#include "ui/PS5Prefs.h"
 #include "ui/PS5Cheats.h"
 #include "ui/PS5GameAchievements.h"
 #include "ui/PS5Settings.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -69,6 +71,25 @@ constexpr float kCard = 196.0f; // card size at rest
 constexpr float kCardGap = 26.0f;
 constexpr float kCardGrow = 1.2f;     // focused card scale
 constexpr int kViews = static_cast<int>(psp5::GameView::count); // tabs along the top
+
+// Text cut to fit a width. Cuts whole characters: what this shortens is the
+// search query, which is whatever was typed, and a cut through the middle of
+// a UTF-8 sequence draws as a replacement box rather than as a shorter word.
+std::string shorten(const ui::FontRef &face, const std::string &text, float size,
+                    float room)
+{
+    if (face.font->measure(text, size) <= room)
+        return text;
+    std::string cut = text;
+    while (!cut.empty() && face.font->measure(cut + "...", size) > room)
+    {
+        do
+        {
+            cut.pop_back();
+        } while (!cut.empty() && (static_cast<unsigned char>(cut.back()) & 0xC0) == 0x80);
+    }
+    return cut + "...";
+}
 // The last row of the settings panel, which is not a setting.
 // Built when they are drawn rather than once: a translation is only known
 // after the language has been chosen, and it changes when it changes.
@@ -176,8 +197,34 @@ class Aurora final : public app::Concept
 
     void update(const InputFrame &input, float dt, app::Feedback &feedback) override
     {
+        // The library can be rebuilt from the frame loop - a share that has just
+        // been set up, a drive that has just appeared - and the shelf is a list
+        // of indices into it. Stale ones would be read off the end of a shorter
+        // library, so the list is made again before anything this frame uses it.
+        if (library_generation_ != psp5::Library().generation())
+        {
+            library_generation_ = psp5::Library().generation();
+            rebuild_shelf(-1);
+        }
         age_ += dt;
         clock_ += dt;
+        // What the shelf can see, asked for every frame: Want is cheap and
+        // idempotent, and asking again is what keeps a cover from being thrown
+        // away while it is still on screen. The covers themselves arrive in
+        // PumpCovers, where the renderer is.
+        if (!shelves_.empty())
+        {
+            const std::vector<int> &items = shelves_[0].items;
+            const int focus = shelves_[0].column;
+            // A window around the focus rather than the whole row: a library of
+            // thousands would otherwise ask for thousands.
+            constexpr int kReach = 8;
+            for (int at = std::max(0, focus - kReach);
+                 at < std::min<int>((int)items.size(), focus + kReach + 1); ++at)
+            {
+                psp5::Library().Want((std::size_t)items[(std::size_t)at]);
+            }
+        }
         if (asking_ >= 0)
         {
             ask_left_ -= dt;
@@ -312,6 +359,24 @@ class Aurora final : public app::Concept
         {
             update_settings(input, feedback);
             nudge_.update(dt, 9.0f);
+            return;
+        }
+        // Search is a filter over whichever tab is open rather than a tab of
+        // its own, so the stick opens it from all of them and Circle clears it
+        // from all of them.
+        //
+        // Both are read before the check below rather than with the rest of the
+        // shelf's input: a query that matched nothing leaves the shelf empty,
+        // and everything under that check is skipped - including the only two
+        // controls that can fill it again.
+        if (!sheet_open_ && !psp5::Library().empty() && input.is_pressed(Action::l3))
+        {
+            open_search(feedback);
+            return;
+        }
+        if (!sheet_open_ && psp5::Library().searching() && input.is_pressed(Action::back))
+        {
+            clear_search(feedback);
             return;
         }
         // Nothing to focus, so nothing below this has a subject. The backdrop
@@ -505,7 +570,32 @@ class Aurora final : public app::Concept
         view_ = static_cast<psp5::GameView>(moved);
         rebuild_shelf(empty() ? -1 : focused_item());
         feedback.play(audio::Cue::tab, next ? 1.06f : 0.94f);
+        // A query, if there is one, is carried across: the tabs are three
+        // orders of one library and the search narrows the library, so moving
+        // between them while searching shows the same games sorted differently
+        // rather than quietly dropping the filter.
         return true;
+    }
+
+    // Opened with the last query already in it, so changing a search costs
+    // nothing and clearing one is deleting what is there.
+    void open_search(app::Feedback &feedback)
+    {
+        typing_ = Typing::search;
+        psp5::KeyboardPanel().Open(psp5::Own("SEARCH"), psp5::Own("Game"),
+                                   psp5::Library().query(), false);
+        feedback.play(audio::Cue::open);
+    }
+
+    // Back to the whole tab. Accepting an empty query at the keyboard does the
+    // same thing; this is the one press that does it without going there, and
+    // it is the way out of a search that matched nothing.
+    void clear_search(app::Feedback &feedback)
+    {
+        const int keep = empty() ? -1 : focused_item();
+        psp5::Library().SetQuery("");
+        rebuild_shelf(keep);
+        feedback.play(audio::Cue::back);
     }
 
     void open_settings(app::Feedback &feedback)
@@ -640,6 +730,7 @@ class Aurora final : public app::Concept
         none,
         achievement_user,
         achievement_password,
+        search,
     };
 
     // What the server is doing, while it is doing it. The sign-in happens on
@@ -918,6 +1009,20 @@ class Aurora final : public app::Concept
         if (!accepted)
         {
             typed_user_.clear();
+            // Nothing to undo: the keyboard was opened over the tab that is
+            // still there, and giving up on it leaves the shelf as it was.
+            return;
+        }
+        if (was == Typing::search)
+        {
+            // The game under the cursor stays under it when the new query
+            // still matches it, so narrowing a search does not also move the
+            // selection to a title nobody chose. An empty query is a cleared
+            // search, which is why the keyboard needs no button of its own
+            // for that.
+            const int keep = empty() ? -1 : focused_item();
+            psp5::Library().SetQuery(psp5::KeyboardPanel().text());
+            rebuild_shelf(keep);
             return;
         }
         if (was == Typing::achievement_user)
@@ -933,6 +1038,7 @@ class Aurora final : public app::Concept
         {
             psp5::AchievementsLogin(typed_user_, psp5::KeyboardPanel().text());
             typed_user_.clear();
+            return;
         }
     }
 
@@ -1121,7 +1227,7 @@ class Aurora final : public app::Concept
                 if (bit == 0 || !input.is_pressed(action))
                     continue;
                 psp5::controls::Bind(button_, asking_slot_, bit);
-                psp5::SettingsPanel().Reload();
+                psp5::SettingsPanel().Refresh();
                 asking_ = -1;
                 feedback.play(audio::Cue::toggle, 1.0f, 0.0f);
                 return;
@@ -1161,7 +1267,7 @@ class Aurora final : public app::Concept
         else if (input.is_pressed(Action::north))
         {
             psp5::controls::Clear(button_, psp5::controls::secondary);
-            psp5::SettingsPanel().Reload();
+            psp5::SettingsPanel().Refresh();
             feedback.play(audio::Cue::back);
         }
     }
@@ -1536,15 +1642,54 @@ class Aurora final : public app::Concept
         }
         ui::draw_button(list, fonts, style, ui::Button::r1, x - 44 + kGlyphGap, y - 9, kGlyph);
 
+        // Search, on the right of the bar the tabs are on. It was a fourth tab,
+        // which meant it could only be started by leaving whatever was being
+        // looked at, and once started nothing on screen said a query was still
+        // narrowing the shelf. Both are top-bar problems, so this is where it
+        // went: the control is always visible, and while a query is set it is
+        // what the control shows.
+        float right = gfx::kVirtualWidth - kMargin;
+        if (!psp5::Library().empty())
+        {
+            const bool searching = psp5::Library().searching();
+            const ui::FontRef &face = searching ? fonts.semibold : fonts.regular;
+            // The keyboard takes sixty-four characters and the tabs end around
+            // 700, so a long query is cut rather than drawn through them.
+            const std::string label = searching
+                                          ? shorten(face, psp5::Library().query(), 26, 420.0f)
+                                          : psp5::Own("Search");
+            const float stick = ui::button_width(ui::Button::left_stick, kGlyph);
+            const float width = stick + kGlyphGap + face.font->measure(label, 26);
+            const float pad = searching ? 20.0f : 0.0f;
+            float at = right - width - pad;
+            if (searching)
+            {
+                // A query is a state the shelf is in rather than a label, so it
+                // is drawn as one. The pill is what says the cards below are a
+                // part of the library and not the whole of it.
+                list.bordered_rect({at - pad, y - 32, width + pad * 2, 46}, 23,
+                                   kWhite.with_alpha(0.07f), 2,
+                                   palette_[3].value().with_alpha(0.55f));
+            }
+            ui::draw_button(list, fonts, style, ui::Button::left_stick, at, y - 9, kGlyph);
+            at += stick + kGlyphGap;
+            ui::text(list, face, label, at, y, 26,
+                     kWhite.with_alpha(searching ? 1.0f : 0.55f));
+            right -= width + pad * 2 + 36;
+        }
+
         // Where the clock and the account avatar were. A count of what is on the
-        // stick is the one fact this screen can actually state.
+        // shelf is the one fact this screen can actually state.
         // The number, then PPSSPP's word for games. Not "%u games" with the
         // word inside the format: a language that puts the count after the noun
         // cannot be written that way, and several do.
         char text[48];
-        const std::size_t count = psp5::Library().size();
+        // What this tab is showing, not what the stick holds. A count that went
+        // on reading 240 beside eleven cards would be describing something other
+        // than the screen - which is exactly what a search needs it to answer.
+        const std::size_t count = psp5::Library().order(view_).size();
         std::snprintf(text, sizeof(text), "%u ", static_cast<unsigned>(count));
-        ui::text(list, fonts.regular, text + psp5::UiWord(psp5::UiString::games), 1824, y, 26,
+        ui::text(list, fonts.regular, text + psp5::UiWord(psp5::UiString::games), right, y, 26,
                  kWhite.with_alpha(0.8f), gfx::Align::right);
         list.pop_opacity();
     }
@@ -1690,19 +1835,42 @@ class Aurora final : public app::Concept
         list.push_opacity(in);
         const Rect panel{kMargin, 360, gfx::kVirtualWidth - kMargin * 2, 420};
         list.bordered_rect(panel, 36, kWhite.with_alpha(0.04f), 2, kWhite.with_alpha(0.16f));
-        const bool no_favorites =
-            view_ == psp5::GameView::favorites && psp5::Library().size() > 0;
-        ui::text(list, fonts.display,
-                 no_favorites ? psp5::Own("No favorites yet") : psp5::Own("No games yet"),
-                 panel.x + 64, panel.y + 150, 72, kWhite);
-        ui::text(list, fonts.regular,
-                 no_favorites ? psp5::Own("Press Triangle on a game to keep it here.")
-                              : psp5::Own("Copy a PSP ISO, CSO, CHD or EBOOT.PBP onto the "
-                                          "memory stick and relaunch."),
-                 panel.x + 64, panel.y + 220, 30, kWhite.with_alpha(0.82f));
-        if (!no_favorites)
-            ui::text(list, fonts.regular, PS5Paths::Memstick() + "/PSP/GAME", panel.x + 64,
-                     panel.y + 290, 26, palette_[3].value());
+
+        // Three ways a shelf can be empty and they want different words: no
+        // games at all, none marked as favorites, or a search that matched none
+        // of the games there are. Only the last can be undone from here, so it
+        // is the only one that says how.
+        const bool any = psp5::Library().size() > 0;
+        const bool searching = any && psp5::Library().searching();
+        const bool no_favorites = any && !searching && view_ == psp5::GameView::favorites;
+
+        std::string title = psp5::Own("No games yet");
+        std::string body = psp5::Own("Copy a PSP ISO, CSO, CHD or EBOOT.PBP onto the "
+                                     "memory stick and relaunch.");
+        std::string note = PS5Paths::Memstick() + "/PSP/GAME";
+        if (searching)
+        {
+            title = psp5::Own("No matches");
+            body = psp5::Own("Press Circle to clear the search, or the left stick to "
+                             "change it.");
+            // What was searched for, in the place the path would be: the one
+            // fact that explains the panel, and the thing most likely mistyped.
+            note = shorten(fonts.regular, psp5::Library().query(), 26,
+                           panel.w - 128.0f);
+        }
+        else if (no_favorites)
+        {
+            title = psp5::Own("No favorites yet");
+            body = psp5::Own("Press Triangle on a game to keep it here.");
+            note.clear();
+        }
+
+        ui::text(list, fonts.display, title, panel.x + 64, panel.y + 150, 72, kWhite);
+        ui::text(list, fonts.regular, body, panel.x + 64, panel.y + 220, 30,
+                 kWhite.with_alpha(0.82f));
+        if (!note.empty())
+            ui::text(list, fonts.regular, note, panel.x + 64, panel.y + 290, 26,
+                     palette_[3].value());
         list.pop_opacity();
     }
 
@@ -2343,9 +2511,24 @@ class Aurora final : public app::Concept
             ui::draw_hints(list, fonts, style, hints, 2, 1824, true);
             return;
         }
-        // With no games, every hint below names a control that does nothing.
+        // With nothing on the shelf, every hint below names a control that does
+        // nothing to it - except the search, which is how a shelf emptied by a
+        // query is filled again, and the one moment it most needs saying. With
+        // no games on the stick at all there is nothing to search either, so the
+        // row stays off.
         if (empty())
+        {
+            if (!psp5::Library().empty() && !achievements_open_ && !cheats_open_)
+            {
+                const std::string search = psp5::Own("Search");
+                const std::string clear = psp5::Own("Clear search");
+                const ui::Hint hints[] = {{ui::Button::left_stick, search.c_str()},
+                                          {ui::Button::circle, clear.c_str()}};
+                ui::draw_hints(list, fonts, style, hints,
+                               psp5::Library().searching() ? 2 : 1, 1824, true);
+            }
             return;
+        }
         if (achievements_open_)
         {
             draw_achievement_hints(list, style);
@@ -2376,12 +2559,30 @@ class Aurora final : public app::Concept
             const std::string game_settings = psp5::UiWord(psp5::UiString::gameSettings);
             const std::string favorite = psp5::UiWord(psp5::UiString::favorite);
             const std::string settings = psp5::UiWord(psp5::UiString::settings);
-            const ui::Hint hints[] = {{ui::Button::r2, achievements.c_str()},
-                                      {ui::Button::cross, details.c_str()},
-                                      {ui::Button::square, game_settings.c_str()},
-                                      {ui::Button::triangle, favorite.c_str()},
-                                      {ui::Button::options, settings.c_str()}};
-            ui::draw_hints(list, fonts, style, hints, 4, 1824, true);
+            const std::string clear = psp5::Own("Clear search");
+            // The row has room for four. While a query is set, Circle clears it
+            // - a face button doing something it does not do the rest of the
+            // time, so it takes the achievements' slot and says so. R2 still
+            // opens achievements; it goes unadvertised for as long as the search
+            // is the more surprising thing on screen. The stick that starts one
+            // is named in the top bar, beside the query it would change.
+            if (psp5::Library().searching())
+            {
+                const ui::Hint hints[] = {{ui::Button::circle, clear.c_str()},
+                                          {ui::Button::cross, details.c_str()},
+                                          {ui::Button::square, game_settings.c_str()},
+                                          {ui::Button::triangle, favorite.c_str()}};
+                ui::draw_hints(list, fonts, style, hints, 4, 1824, true);
+            }
+            else
+            {
+                const ui::Hint hints[] = {{ui::Button::r2, achievements.c_str()},
+                                          {ui::Button::cross, details.c_str()},
+                                          {ui::Button::square, game_settings.c_str()},
+                                          {ui::Button::triangle, favorite.c_str()},
+                                          {ui::Button::options, settings.c_str()}};
+                ui::draw_hints(list, fonts, style, hints, 4, 1824, true);
+            }
             list.pop_opacity();
         }
     }
@@ -2398,6 +2599,8 @@ class Aurora final : public app::Concept
     bool ask_armed_ = false;
     float ask_left_ = 0.0f;                        // seconds before it gives up
     int setting_ = 0;                              // its focused row
+    // The library build the shelf was made from. See the top of update().
+    std::uint32_t library_generation_ = psp5::Library().generation();
     Typing typing_ = Typing::none;                 // which answer the keyboard is taking
     int sign_in_button_ = 0;                       // the focused button of the sign-in dialog
     bool sign_out_asking_ = false;                 // the sign-out dialog is up

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -26,6 +27,7 @@
 #include "PS5Paths.h"
 #include "ui/PS5GameArt.h"
 #include "ui/PS5Settings.h"
+#include "ui/PS5Strings.h"
 
 #include "gfx/backdrop_spec.hpp"
 #include "gfx/draw_list.hpp"
@@ -363,6 +365,51 @@ std::string FavoritesPath() {
 	return PS5Paths::Config() + "/favorites.txt";
 }
 
+std::string KnownPath() {
+	return PS5Paths::Config() + "/games.txt";
+}
+
+// One shelf entry from what a directory said about a file, or false if the
+// file is not a game.
+//
+// `folder` is the name of the directory the file sits in, or empty at the top
+// of a walk. Not the whole path.
+bool MakeEntry(const std::string &folder, const std::string &name, std::uint64_t size,
+               std::uint64_t mtime, GameEntry *entry) {
+	const char *format = FormatName(Extension(name));
+	if (!format) {
+		return false;
+	}
+	entry->format = format;
+	// An EBOOT.PBP is named after its folder, not after itself: without this
+	// every one of them would sit on the shelf as "EBOOT".
+	if (Lower(name) == "eboot.pbp" && !folder.empty()) {
+		entry->title = PrettyTitle(folder);
+	} else {
+		entry->title = PrettyTitle(name);
+	}
+	entry->size = size;
+	entry->mtime = mtime;
+	entry->size_text = SizeText(size);
+
+	char when[48];
+	const std::time_t stamp = static_cast<std::time_t>(mtime);
+	if (const std::tm *parts = std::gmtime(&stamp)) {
+		std::strftime(when, sizeof(when), "%d %b %Y", parts);
+		entry->year = parts->tm_year + 1900;
+	} else {
+		std::snprintf(when, sizeof(when), "date unknown");
+	}
+	entry->date_text = when;
+	return true;
+}
+
+// The last component of a path, which is the folder name MakeEntry wants.
+std::string FolderName(const std::string &path) {
+	const std::size_t slash = path.find_last_of('/');
+	return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
 }  // namespace
 
 GameLibrary &Library() {
@@ -372,7 +419,10 @@ GameLibrary &Library() {
 
 void GameLibrary::Scan() {
 	entries_.clear();
+	ScanLocal();
+}
 
+void GameLibrary::ScanLocal() {
 	// An explicit stack, not recursion: the depth is bounded here, and nothing
 	// about the shape of a memory stick should be able to grow the call stack.
 	struct Pending {
@@ -420,35 +470,13 @@ void GameLibrary::Scan() {
 				}
 				continue;
 			}
-			const char *format = FormatName(Extension(name));
-			if (!format) {
+			GameEntry entry;
+			const std::string folder = here.depth > 0 ? FolderName(here.path) : std::string();
+			if (!MakeEntry(folder, name, static_cast<std::uint64_t>(info.st_size),
+			               static_cast<std::uint64_t>(info.st_mtime), &entry)) {
 				continue;
 			}
-
-			GameEntry entry;
 			entry.path = full;
-			entry.format = format;
-			// An EBOOT.PBP is named after its folder, not after itself: without
-			// this every one of them would sit on the shelf as "EBOOT".
-			const std::size_t slash = here.path.find_last_of('/');
-			if (Lower(name) == "eboot.pbp" && here.depth > 0 && slash != std::string::npos) {
-				entry.title = PrettyTitle(here.path.substr(slash + 1));
-			} else {
-				entry.title = PrettyTitle(name);
-			}
-			entry.size = static_cast<std::uint64_t>(info.st_size);
-			entry.mtime = static_cast<std::uint64_t>(info.st_mtime);
-			entry.size_text = SizeText(entry.size);
-
-			char when[48];
-			const std::time_t stamp = static_cast<std::time_t>(info.st_mtime);
-			if (const std::tm *parts = std::gmtime(&stamp)) {
-				std::strftime(when, sizeof(when), "%d %b %Y", parts);
-				entry.year = parts->tm_year + 1900;
-			} else {
-				std::snprintf(when, sizeof(when), "date unknown");
-			}
-			entry.date_text = when;
 
 			entries_.push_back(std::move(entry));
 			if (entries_.size() >= kMaxGames) {
@@ -502,6 +530,39 @@ void GameLibrary::BuildOrders() {
 			favorites.push_back(index);
 		}
 	}
+
+	BuildFound();
+}
+
+// Every view, narrowed to whatever the query matches, in that view's own
+// order. An empty query leaves these empty and order() reads the full lists
+// instead, so there is no state to undo when a search is cleared.
+void GameLibrary::BuildFound() {
+	for (std::vector<int> &found : found_) {
+		found.clear();
+	}
+	if (query_.empty()) {
+		return;
+	}
+	// Matched once per game rather than once per game per view: the three
+	// orders are three arrangements of one library, and lowercasing every
+	// title three times is three times the work for the same answer.
+	const std::string needle = Lower(query_);
+	std::vector<bool> matched(entries_.size(), false);
+	for (std::size_t i = 0; i < entries_.size(); ++i) {
+		const GameEntry &entry = entries_[i];
+		// The disc id as well as the name, so ULUS10512 finds a game whose
+		// title nobody can spell.
+		matched[i] = Lower(entry.title).find(needle) != std::string::npos ||
+		             Lower(entry.disc_id).find(needle) != std::string::npos;
+	}
+	for (std::size_t view = 0; view < static_cast<std::size_t>(GameView::count); ++view) {
+		for (const int index : order_[view]) {
+			if (matched[static_cast<std::size_t>(index)]) {
+				found_[view].push_back(index);
+			}
+		}
+	}
 }
 
 void GameLibrary::LoadFavorites() {
@@ -540,6 +601,87 @@ void GameLibrary::SaveFavorites() const {
 	chmod(FavoritesPath().c_str(), 0666);
 }
 
+// One line a game: disc id, title, date, size, path. The path is last and is
+// whatever follows the fourth tab, so a path with a tab in it still reads back
+// whole; the title is tab-free by the time Simplify is done with it.
+void GameLibrary::LoadKnown() {
+	known_.clear();
+	known_dirty_ = false;
+	FILE *fh = fopen(KnownPath().c_str(), "rb");
+	if (!fh) {
+		return;
+	}
+	char line[2048];
+	while (fgets(line, sizeof(line), fh)) {
+		std::string text(line);
+		while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+			text.pop_back();
+		}
+		std::size_t at = 0;
+		std::string field[4];
+		bool whole = true;
+		for (std::string &part : field) {
+			const std::size_t tab = text.find('\t', at);
+			if (tab == std::string::npos) {
+				whole = false;
+				break;
+			}
+			part = text.substr(at, tab - at);
+			at = tab + 1;
+		}
+		if (!whole || at >= text.size()) {
+			continue;
+		}
+		Known known;
+		known.disc_id = field[0];
+		known.title = field[1];
+		known.mtime = strtoull(field[2].c_str(), nullptr, 10);
+		known.size = strtoull(field[3].c_str(), nullptr, 10);
+		known_[text.substr(at)] = known;
+	}
+	fclose(fh);
+}
+
+void GameLibrary::SaveKnown() const {
+	FILE *fh = fopen(KnownPath().c_str(), "wb");
+	if (!fh) {
+		psp5::Trace("library: cannot write %s", KnownPath().c_str());
+		return;
+	}
+	// Everything, not only what is on the shelf now: a drive that is unplugged
+	// today is the same drive tomorrow, and forgetting its games would put them
+	// back at the bottom of Recent when it returns.
+	for (const auto &entry : known_) {
+		fprintf(fh, "%s\t%s\t%llu\t%llu\t%s\n", entry.second.disc_id.c_str(),
+		        entry.second.title.c_str(), (unsigned long long)entry.second.mtime,
+		        (unsigned long long)entry.second.size, entry.first.c_str());
+	}
+	fclose(fh);
+	chmod(KnownPath().c_str(), 0666);
+}
+
+void GameLibrary::Remember(std::size_t index) {
+	if (index >= entries_.size()) {
+		return;
+	}
+	const GameEntry &entry = entries_[index];
+	if (entry.disc_id.empty()) {
+		// Homebrew and anything else without a PARAM.SFO. There is nothing to
+		// file its play time under, so there is nothing worth keeping.
+		return;
+	}
+	Known &known = known_[entry.path];
+	if (known.disc_id == entry.disc_id && known.title == entry.title &&
+	    known.mtime == entry.mtime && known.size == entry.size) {
+		return;
+	}
+	known.disc_id = entry.disc_id;
+	known.title = entry.title;
+	known.mtime = entry.mtime;
+	known.size = entry.size;
+	known_dirty_ = true;
+}
+
 bool GameLibrary::IsFavorite(std::size_t index) const {
 	return index < entries_.size() && entries_[index].favorite;
 }
@@ -554,6 +696,16 @@ void GameLibrary::ToggleFavorite(std::size_t index) {
 }
 
 void GameLibrary::Release(hui::gfx::Renderer &renderer) {
+	// Before the textures go: the worker hands finished art to PumpCovers, and
+	// nothing may reach the renderer after this.
+	StopWorker();
+	{
+		std::lock_guard<std::mutex> held(lock_);
+		wanted_.clear();
+		finished_.clear();
+	}
+	recent_covers_.clear();
+	std::fill(asked_.begin(), asked_.end(), false);
 	for (hui::demo::Item &item : items_) {
 		if (item.cover != 0) {
 			renderer.destroy_texture(item.cover);
@@ -562,51 +714,354 @@ void GameLibrary::Release(hui::gfx::Renderer &renderer) {
 	}
 }
 
+void GameLibrary::MakeCover(hui::gfx::Renderer &renderer, const hui::ui::Fonts &fonts,
+                            std::size_t index, const GameArt &art) {
+	constexpr float kSize = static_cast<float>(kCoverSize);
+	const GameEntry &entry = entries_[index];
+	hui::demo::Item &item = items_[index];
+	hui::gfx::DrawList list;
+
+	// The game's own images, uploaded just long enough to be drawn into the
+	// cover. They are released below: what the shelf keeps is the one square
+	// texture, not three.
+	const std::uint32_t background =
+	    art.background.valid()
+	        ? renderer.create_texture(art.background.width, art.background.height,
+	                                  art.background.rgba.data())
+	        : 0;
+	const std::uint32_t icon =
+	    art.icon.valid()
+	        ? renderer.create_texture(art.icon.width, art.icon.height, art.icon.rgba.data())
+	        : 0;
+
+	hui::gfx::BackdropSpec spec;
+	// With key art there is nothing for a procedural backdrop to do but show
+	// through it.
+	spec.mode = background != 0 ? hui::gfx::BackdropMode::none
+	                            : kModes[index % (sizeof(kModes) / sizeof(kModes[0]))];
+	spec.colors[0] = item.dark;
+	spec.colors[1] = item.mid;
+	spec.colors[2] = hui::gfx::mix(item.mid, item.accent, 0.6f);
+	spec.colors[3] = item.accent;
+	spec.params[0] = 0.4f;
+	spec.params[1] = 0.3f;
+	spec.params[2] = 0.5f;
+	// A different moment of the same animation per cover, so no two are the
+	// same picture even where the backdrop mode repeats.
+	spec.time = 11.0f + static_cast<float>(index) * 7.3f;
+
+	if (background != 0) {
+		// PIC1 is 480x272 and the card is square, so it is centre-cropped and
+		// dimmed - it is the setting here, not the subject.
+		list.image(background, {0, 0, kSize, kSize},
+		           FillSquareUv(art.background.width, art.background.height),
+		           Color{0.62f, 0.62f, 0.62f, 1.0f});
+	}
+	if (icon != 0) {
+		// ICON0 at its own aspect, which is 144x80 on a UMD title. Stretching
+		// it to the square would be the one thing worse than not showing it.
+		const float width = 368.0f;
+		const float height = width * (float)art.icon.height / (float)art.icon.width;
+		const hui::gfx::Rect rect{(kSize - width) * 0.5f, 150.0f - height * 0.5f, width, height};
+		list.shadow({rect.x, rect.y + 14, rect.w, rect.h}, 18, 30,
+		            Color{0.0f, 0.0f, 0.0f, 0.55f});
+		list.image(icon, rect, hui::gfx::kFullUv, Color{1.0f, 1.0f, 1.0f, 1.0f}, 10);
+		list.bordered_rect(rect, 10, Color{0.0f, 0.0f, 0.0f, 0.0f}, 2,
+		                   Color{1.0f, 1.0f, 1.0f, 0.22f});
+	} else if (background == 0) {
+		// No artwork at all - homebrew, usually. A disc, so the card still
+		// reads as a game rather than as a gradient.
+		list.glow({146, 86, 220, 220}, 110, 70, item.accent.with_alpha(0.35f));
+		list.circle(256, 196, 96, item.accent.with_alpha(0.92f));
+		list.circle(256, 196, 34, item.dark.with_alpha(0.95f));
+		list.arc(256, 196, 128, 5, 2.0f, 2.4f, Color{1.0f, 1.0f, 1.0f, 0.55f});
+	}
+
+	// A dark foot keeps the title legible over any artwork.
+	list.gradient_rect({0, 250, kSize, 262}, 0, item.dark.with_alpha(0.0f),
+	                   item.dark.with_alpha(0.92f));
+	hui::ui::text(list, fonts.semibold, entry.format, 36, 54, 17, Color{1.0f, 1.0f, 1.0f, 0.7f},
+	              hui::gfx::Align::left, 2.5f);
+
+	const std::vector<std::string> lines = fonts.display.font->wrap(entry.title, 48, kSize - 72);
+	// Three lines at most: a long title must not climb off the top of its own
+	// cover and over the artwork.
+	const std::size_t shown = std::min<std::size_t>(lines.size(), 3);
+	float baseline = kSize - 44.0f - static_cast<float>(shown ? shown - 1 : 0) * 52.0f;
+	for (std::size_t line = 0; line < shown; ++line) {
+		hui::ui::text(list, fonts.display, lines[line], 36, baseline, 48,
+		              Color{1.0f, 1.0f, 1.0f, 1.0f});
+		baseline += 52.0f;
+	}
+
+	renderer.begin();
+	renderer.backdrop(spec);
+	renderer.draw(list);
+	const std::uint32_t cover = renderer.render_to_texture(kCoverSize, kCoverSize, kSize, kSize);
+
+	// render_to_texture submits and waits for the queue, so by here the draw
+	// has finished with these and they can go.
+	if (background != 0) {
+		renderer.destroy_texture(background);
+	}
+	if (icon != 0) {
+		renderer.destroy_texture(icon);
+	}
+	if (cover == 0) {
+		psp5::Trace("library: cover %u failed", (unsigned)index);
+		return;
+	}
+	if (item.cover != 0) {
+		renderer.destroy_texture(item.cover);
+	}
+	item.cover = cover;
+}
+
+// What the game says about itself, once the worker has read it.
+void GameLibrary::Apply(std::size_t index, GameArt &art) {
+	GameEntry &entry = entries_[index];
+	hui::demo::Item &item = items_[index];
+
+	if (!art.title.empty()) {
+		// PARAM.SFO over the filename: "God of War: Ghost of Sparta" rather
+		// than whatever the dump was called.
+		const std::string simplified = Simplify(art.title);
+		if (!simplified.empty()) {
+			entry.title = simplified;
+			// The item points into the entry's string, and assigning it may
+			// have moved that string's buffer.
+			item.title = entry.title.c_str();
+		}
+	}
+	entry.has_art = art.icon.valid();
+	entry.disc_id = art.discId;
+	// Now that the game has been opened, so the next run can order Recent
+	// without opening it again. PumpCovers writes the file once the batch is
+	// done rather than once a game.
+	Remember(index);
+
+	// One menu loop in memory, not one per game: a few hundred kilobytes each
+	// would be hundreds of megabytes across a library this is now allowed to
+	// have. The shelf only ever plays the game it is sitting on.
+	for (GameEntry &other : entries_) {
+		other.sound.clear();
+	}
+	if (art.sound.size() <= kMaxSoundBytes) {
+		entry.sound = std::move(art.sound);
+	}
+
+	// The palette follows the artwork where there is any, so the Aurora
+	// backdrop behind the shelf takes its colour from the focused game.
+	float hue = 0.0f;
+	if (!HueOfArtwork(art.background, &hue) && !HueOfArtwork(art.icon, &hue)) {
+		hue = HueFor(entry.title);
+	}
+	item.dark = FromHsv(hue, 0.72f, 0.16f);
+	item.mid = FromHsv(hue, 0.62f, 0.42f);
+	// The accent sits a little way round the wheel from the body colour; that
+	// offset is what keeps a cover from reading as one flat tone.
+	item.accent = FromHsv(std::fmod(hue + 0.08f, 1.0f), 0.55f, 0.95f);
+}
+
+void GameLibrary::StartWorker() {
+	if (worker_.joinable()) {
+		return;
+	}
+	stopping_ = false;
+	worker_ = std::thread([this]() {
+		for (;;) {
+			std::size_t index = 0;
+			{
+				std::unique_lock<std::mutex> held(lock_);
+				wake_.wait(held, [this]() { return stopping_ || !wanted_.empty(); });
+				if (stopping_) {
+					return;
+				}
+				index = wanted_.front();
+				wanted_.pop_front();
+			}
+			// Outside the lock: this mounts an ISO and decodes two PNGs, and
+			// holding the lock through it would stall every frame that asks
+			// for a cover.
+			GameArt art;
+			LoadGameArt(entries_[index].path, &art);
+			{
+				std::lock_guard<std::mutex> held(lock_);
+				finished_.push_back({index, std::move(art)});
+			}
+		}
+	});
+}
+
+void GameLibrary::StopWorker() {
+	if (!worker_.joinable()) {
+		return;
+	}
+	{
+		std::lock_guard<std::mutex> held(lock_);
+		stopping_ = true;
+	}
+	wake_.notify_all();
+	worker_.join();
+}
+
+void GameLibrary::Want(std::size_t index) {
+	if (index >= entries_.size()) {
+		return;
+	}
+	// Wanted again moves it to the end of the queue of things to keep, which
+	// is what makes the eviction below least-recently-wanted.
+	const auto at = std::find(recent_covers_.begin(), recent_covers_.end(), index);
+	if (at != recent_covers_.end()) {
+		recent_covers_.erase(at);
+	}
+	recent_covers_.push_back(index);
+
+	if (asked_[index]) {
+		return;
+	}
+	asked_[index] = true;
+	{
+		std::lock_guard<std::mutex> held(lock_);
+		wanted_.push_back(index);
+	}
+	wake_.notify_one();
+}
+
+void GameLibrary::Evict(hui::gfx::Renderer &renderer) {
+	// Only covers count against the budget: an entry with no texture costs
+	// nothing and can stay in the list.
+	std::size_t covers = 0;
+	for (const hui::demo::Item &item : items_) {
+		covers += item.cover != 0 ? 1 : 0;
+	}
+	for (std::size_t at = 0; at < recent_covers_.size() && covers > kMaxCovers; ++at) {
+		const std::size_t index = recent_covers_[at];
+		if (index >= items_.size() || items_[index].cover == 0) {
+			continue;
+		}
+		renderer.destroy_texture(items_[index].cover);
+		items_[index].cover = 0;
+		// Asked again next time it comes near: the art is not kept, only the
+		// texture was, and reading it again is what the worker is for.
+		asked_[index] = false;
+		--covers;
+	}
+	// Anything that lost its cover above is no longer worth remembering.
+	recent_covers_.erase(std::remove_if(recent_covers_.begin(), recent_covers_.end(),
+	                                    [this](std::size_t index) {
+		                                    return index >= items_.size() ||
+		                                           items_[index].cover == 0;
+	                                    }),
+	                     recent_covers_.end());
+}
+
+void GameLibrary::PumpCovers(hui::gfx::Renderer &renderer, const hui::ui::Fonts &fonts) {
+	std::vector<Finished> ready;
+	{
+		std::lock_guard<std::mutex> held(lock_);
+		// A few a frame. render_to_texture waits for the queue each time, so
+		// draining the lot would be a visible stall on the first pass over a
+		// large library.
+		const std::size_t take = std::min<std::size_t>(finished_.size(), 2);
+		ready.assign(std::make_move_iterator(finished_.begin()),
+		             std::make_move_iterator(finished_.begin() + (std::ptrdiff_t)take));
+		finished_.erase(finished_.begin(), finished_.begin() + (std::ptrdiff_t)take);
+	}
+	for (Finished &done : ready) {
+		if (done.index >= items_.size()) {
+			continue;
+		}
+		Apply(done.index, done.art);
+		MakeCover(renderer, fonts, done.index, done.art);
+		resolved_[done.index] = true;
+	}
+	if (!ready.empty()) {
+		Evict(renderer);
+	}
+	// Once the batch is done, not once a game: the worker resolves a whole
+	// library over the first minute and this would otherwise rewrite the file
+	// a few hundred times for the same end.
+	if (known_dirty_) {
+		SaveKnown();
+		known_dirty_ = false;
+	}
+}
+
+const std::string &GameLibrary::DiscIdNow(std::size_t index) {
+	static const std::string none;
+	if (index >= entries_.size()) {
+		return none;
+	}
+	if (resolved_[index] || !entries_[index].disc_id.empty()) {
+		return entries_[index].disc_id;
+	}
+	// On the way into a game there is nothing to wait for the worker with, and
+	// the cheat file and the achievements both need this now. One ISO open.
+	GameArt art;
+	LoadGameArt(entries_[index].path, &art);
+	entries_[index].disc_id = art.discId;
+	resolved_[index] = true;
+	// Written out here and not left to the next frame: this is the way into a
+	// game, and the home screen may not get another frame before the emulator
+	// takes the display. This is also the one game whose play time is about to
+	// change, so it is the one Recent most needs to know about next time.
+	Remember(index);
+	if (known_dirty_) {
+		SaveKnown();
+		known_dirty_ = false;
+	}
+	return entries_[index].disc_id;
+}
+
+void GameLibrary::SetQuery(const std::string &query) {
+	query_ = query;
+	BuildFound();
+}
+
 bool GameLibrary::Build(hui::gfx::Renderer &renderer, const hui::ui::Fonts &fonts) {
+	(void)fonts;
+	StopWorker();
 	Release(renderer);
 	items_.clear();
 
 	Scan();
 	psp5::Trace("library: %u game(s) under %s", (unsigned)entries_.size(),
 	            PS5Paths::Memstick().c_str());
-	if (entries_.empty()) {
-		BuildOrders();
-		return true;
+
+	// Before the items below, which point into these strings, and before the
+	// orders are built, which is the whole point: Recent is sorted on the disc
+	// id and nothing else here knows one yet.
+	LoadKnown();
+	int recalled = 0;
+	for (GameEntry &entry : entries_) {
+		const auto found = known_.find(entry.path);
+		if (found == known_.end()) {
+			continue;
+		}
+		// A file of the same name but a different size or date is a different
+		// file. Describing it with what used to be there would put the wrong
+		// name on the shelf and the wrong cheats in the game.
+		if (found->second.mtime != entry.mtime || found->second.size != entry.size) {
+			continue;
+		}
+		entry.disc_id = found->second.disc_id;
+		if (!found->second.title.empty()) {
+			entry.title = found->second.title;
+		}
+		++recalled;
+	}
+	if (recalled > 0) {
+		psp5::Trace("library: %d of them already known by name and disc id", recalled);
 	}
 
-	constexpr float kSize = static_cast<float>(kCoverSize);
+	// A shelf of names and colours, ready on the first frame. Nothing here
+	// opens a game: the title is the filename until the worker says otherwise,
+	// and the colour is derived from that name so the shelf has something to
+	// be before any artwork exists.
 	items_.reserve(entries_.size());
-	hui::gfx::DrawList list;
-
 	for (std::size_t i = 0; i < entries_.size(); ++i) {
-		GameEntry &entry = entries_[i];
-
-		// What the game says about itself: its own name and its own artwork.
-		GameArt art;
-		LoadGameArt(entry.path, &art);
-		if (!art.title.empty()) {
-			// PARAM.SFO over the filename: "God of War: Ghost of Sparta" rather
-			// than whatever the dump was called.
-			const std::string simplified = Simplify(art.title);
-			if (!simplified.empty()) {
-				entry.title = simplified;
-			}
-		}
-		entry.has_art = art.icon.valid();
-		entry.disc_id = art.discId;
-		// A few hundred kilobytes each. A disc with something far larger under
-		// this name is not a menu loop, and is not worth the memory.
-		if (art.sound.size() <= kMaxSoundBytes) {
-			entry.sound = std::move(art.sound);
-		}
-
-		// The palette follows the artwork where there is any, so the Aurora
-		// backdrop behind the shelf takes its colour from the focused game.
-		float hue = 0.0f;
-		if (!HueOfArtwork(art.background, &hue) && !HueOfArtwork(art.icon, &hue)) {
-			hue = HueFor(entry.title);
-		}
-
+		const GameEntry &entry = entries_[i];
 		hui::demo::Item item{};
 		// These point into entries_, which is complete and never appended to
 		// again: see the note on the member in the header.
@@ -615,124 +1070,25 @@ bool GameLibrary::Build(hui::gfx::Renderer &renderer, const hui::ui::Fonts &font
 		item.genre = entry.format.c_str();
 		item.blurb = entry.path.c_str();
 		item.year = entry.year;
+		const float hue = HueFor(entry.title);
 		item.dark = FromHsv(hue, 0.72f, 0.16f);
 		item.mid = FromHsv(hue, 0.62f, 0.42f);
-		// The accent sits a little way round the wheel from the body colour; that
-		// offset is what keeps a cover from reading as one flat tone.
 		item.accent = FromHsv(std::fmod(hue + 0.08f, 1.0f), 0.55f, 0.95f);
-
-		// The game's own images, uploaded just long enough to be drawn into the
-		// cover. They are released below: what the shelf keeps is the one square
-		// texture, not three.
-		const std::uint32_t background =
-		    art.background.valid()
-		        ? renderer.create_texture(art.background.width, art.background.height,
-		                                  art.background.rgba.data())
-		        : 0;
-		const std::uint32_t icon =
-		    art.icon.valid()
-		        ? renderer.create_texture(art.icon.width, art.icon.height, art.icon.rgba.data())
-		        : 0;
-
-		hui::gfx::BackdropSpec spec;
-		// With key art there is nothing for a procedural backdrop to do but show
-		// through it.
-		spec.mode = background != 0 ? hui::gfx::BackdropMode::none
-		                            : kModes[i % (sizeof(kModes) / sizeof(kModes[0]))];
-		spec.colors[0] = item.dark;
-		spec.colors[1] = item.mid;
-		spec.colors[2] = hui::gfx::mix(item.mid, item.accent, 0.6f);
-		spec.colors[3] = item.accent;
-		spec.params[0] = 0.4f;
-		spec.params[1] = 0.3f;
-		spec.params[2] = 0.5f;
-		// A different moment of the same animation per cover, so no two are the
-		// same picture even where the backdrop mode repeats.
-		spec.time = 11.0f + static_cast<float>(i) * 7.3f;
-
-		list.clear();
-		if (background != 0) {
-			// PIC1 is 480x272 and the card is square, so it is centre-cropped and
-			// dimmed - it is the setting here, not the subject.
-			list.image(background, {0, 0, kSize, kSize},
-			           FillSquareUv(art.background.width, art.background.height),
-			           Color{0.62f, 0.62f, 0.62f, 1.0f});
-		}
-		if (icon != 0) {
-			// ICON0 at its own aspect, which is 144x80 on a UMD title. Stretching
-			// it to the square would be the one thing worse than not showing it.
-			const float width = 368.0f;
-			const float height = width * (float)art.icon.height / (float)art.icon.width;
-			const hui::gfx::Rect rect{(kSize - width) * 0.5f, 150.0f - height * 0.5f, width,
-			                          height};
-			list.shadow({rect.x, rect.y + 14, rect.w, rect.h}, 18, 30,
-			            Color{0.0f, 0.0f, 0.0f, 0.55f});
-			list.image(icon, rect, hui::gfx::kFullUv, Color{1.0f, 1.0f, 1.0f, 1.0f}, 10);
-			list.bordered_rect(rect, 10, Color{0.0f, 0.0f, 0.0f, 0.0f}, 2,
-			                   Color{1.0f, 1.0f, 1.0f, 0.22f});
-		} else if (background == 0) {
-			// No artwork at all - homebrew, usually. A disc, so the card still
-			// reads as a game rather than as a gradient.
-			list.glow({146, 86, 220, 220}, 110, 70, item.accent.with_alpha(0.35f));
-			list.circle(256, 196, 96, item.accent.with_alpha(0.92f));
-			list.circle(256, 196, 34, item.dark.with_alpha(0.95f));
-			list.arc(256, 196, 128, 5, 2.0f, 2.4f, Color{1.0f, 1.0f, 1.0f, 0.55f});
-		}
-
-		// A dark foot keeps the title legible over any artwork.
-		list.gradient_rect({0, 250, kSize, 262}, 0, item.dark.with_alpha(0.0f),
-		                   item.dark.with_alpha(0.92f));
-		hui::ui::text(list, fonts.semibold, entry.format, 36, 54, 17,
-		              Color{1.0f, 1.0f, 1.0f, 0.7f}, hui::gfx::Align::left, 2.5f);
-
-		const std::vector<std::string> lines = fonts.display.font->wrap(entry.title, 48, kSize - 72);
-		// Three lines at most: a long title must not climb off the top of its own
-		// cover and over the artwork.
-		const std::size_t shown = std::min<std::size_t>(lines.size(), 3);
-		float baseline = kSize - 44.0f - static_cast<float>(shown ? shown - 1 : 0) * 52.0f;
-		for (std::size_t line = 0; line < shown; ++line) {
-			hui::ui::text(list, fonts.display, lines[line], 36, baseline, 48,
-			              Color{1.0f, 1.0f, 1.0f, 1.0f});
-			baseline += 52.0f;
-		}
-
-		renderer.begin();
-		renderer.backdrop(spec);
-		renderer.draw(list);
-		item.cover = renderer.render_to_texture(kCoverSize, kCoverSize, kSize, kSize);
-
-		// render_to_texture submits and waits for the queue, so by here the draw
-		// has finished with these and they can go.
-		if (background != 0) {
-			renderer.destroy_texture(background);
-		}
-		if (icon != 0) {
-			renderer.destroy_texture(icon);
-		}
-
-		if (item.cover == 0) {
-			psp5::Trace("library: cover %u failed, keeping %u item(s)", (unsigned)i,
-			            (unsigned)items_.size());
-			break;
-		}
+		item.cover = 0;
 		items_.push_back(item);
 	}
 
-	unsigned with_art = 0;
-	for (const GameEntry &entry : entries_) {
-		with_art += entry.has_art ? 1 : 0;
-	}
-	psp5::Trace("library: %u of %u game(s) carry their own icon", with_art,
-	            (unsigned)entries_.size());
+	asked_.assign(entries_.size(), false);
+	resolved_.assign(entries_.size(), false);
+	recent_covers_.clear();
 
-	// A failed cover leaves entries with no item behind them. The orders index
-	// items, so they are built against what actually has artwork.
-	if (items_.size() != entries_.size()) {
-		entries_.resize(items_.size());
-	}
 	// After the entries are final, so a favorite can be matched to one.
 	LoadFavorites();
 	BuildOrders();
+	if (!entries_.empty()) {
+		StartWorker();
+	}
+	++generation_;
 	return true;
 }
 

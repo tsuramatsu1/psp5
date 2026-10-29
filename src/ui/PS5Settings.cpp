@@ -734,6 +734,10 @@ void Settings::Reload() {
 	Rebuild();
 }
 
+void Settings::Refresh() {
+	Rebuild();
+}
+
 void Settings::BeginGame(const std::string &discId, const std::string &title) {
 	EndGame();
 	if (discId.empty()) {

@@ -23,7 +23,12 @@ namespace {
 using hui::gfx::Color;
 using hui::gfx::Rect;
 
-constexpr int kColumns = 10;
+// Eleven, not ten. Ten columns gave forty character keys and eighty faces,
+// and twenty-six letters with ten digits filled all but eight of them - which
+// left no room for a question mark, among others. The eleventh column is four
+// more keys and eight more characters; everything below is derived from this,
+// so the board widens and re-centres itself.
+constexpr int kColumns = 11;
 constexpr int kCharRows = 4;
 constexpr int kRows = kCharRows + 1;  // the characters, then the wide keys
 constexpr int kKeys = kColumns * kCharRows + 4;
@@ -67,17 +72,20 @@ struct Key {
 // four of them, and the second face of every key is where the rest live. Without
 // this only @ - _ and . could be typed at all, which is not enough for a
 // password.
+// The last column of each row is where the punctuation a password or a search
+// needs but QWERTY hides went: ? / ; : [ { ` ~. They sit roughly where a real
+// keyboard puts them - bracket after P, semicolon after L, slash after M.
 constexpr const char *kLower[kCharRows] = {
-    "1234567890",
-    "qwertyuiop",
-    "asdfghjkl.",
-    "zxcvbnm-_'",
+    "1234567890`",
+    "qwertyuiop[",
+    "asdfghjkl.;",
+    "zxcvbnm-_'/",
 };
 constexpr const char *kUpper[kCharRows] = {
-    "!@#$%^&*()",
-    "QWERTYUIOP",
-    "ASDFGHJKL,",
-    "ZXCVBNM+=\"",
+    "!@#$%^&*()~",
+    "QWERTYUIOP{",
+    "ASDFGHJKL,:",
+    "ZXCVBNM+=\"?",
 };
 
 constexpr std::array<Key, kKeys> MakeKeys() {
@@ -89,9 +97,9 @@ constexpr std::array<Key, kKeys> MakeKeys() {
 		}
 	}
 	keys[kShiftKey] = {KeyKind::shift, kCharRows, 0, 2, 0, 0};
-	keys[kSpaceKey] = {KeyKind::space, kCharRows, 2, 4, ' ', ' '};
-	keys[kEraseKey] = {KeyKind::erase, kCharRows, 6, 2, 0, 0};
-	keys[kDoneKey] = {KeyKind::done, kCharRows, 8, 2, 0, 0};
+	keys[kSpaceKey] = {KeyKind::space, kCharRows, 2, 5, ' ', ' '};
+	keys[kEraseKey] = {KeyKind::erase, kCharRows, 7, 2, 0, 0};
+	keys[kDoneKey] = {KeyKind::done, kCharRows, 9, 2, 0, 0};
 	return keys;
 }
 

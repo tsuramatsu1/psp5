@@ -58,15 +58,42 @@ static const char *const kRequests[] = {
 
 #define CRASH_MARKER "/download0/psp5_unlock_attempt"
 
+/* Whether psp5 can see the console's own filesystem, which is the whole point
+ * of the unlock: the games live under /mnt/usb0/PSP, and a jailed title has no
+ * /mnt worth the name.
+ *
+ * This used to open /data and take that as proof. It is not proof. A jailed
+ * title is handed /data anyway - etaHEN and the rest live there, and the unlock
+ * request below is written into it - so the check passed whether or not psp5
+ * had been let out. psp5 then reported "already unlocked", never asked, and sat
+ * in front of an empty shelf on a console whose drives were full. A check that
+ * cannot fail is not a check, and this one hid the failure it was meant to
+ * catch: the title had worked the run before, so nothing in the log suggested
+ * the jail had closed again.
+ *
+ * /mnt is both the thing wanted and the thing withheld. Outside the jail it
+ * holds the drives, the disc and the sandbox folder; inside, it is empty. So
+ * the test is emptiness, not whether opendir() succeeds - the directory itself
+ * is there either way, which is exactly how this went unnoticed.
+ */
 int
 PS5_FoldersListable(void)
 {
-   DIR *dir = opendir("/data");
+   DIR *dir = opendir("/mnt");
    if (!dir) {
       return 0;
    }
+   int found = 0;
+   const struct dirent *entry;
+   while ((entry = readdir(dir)) != NULL) {
+      if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+         continue;
+      }
+      found = 1;
+      break;
+   }
    closedir(dir);
-   return 1;
+   return found;
 }
 
 /* Written whole or not at all: a daemon that reads a half-written body takes

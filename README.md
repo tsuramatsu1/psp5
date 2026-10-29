@@ -182,12 +182,12 @@ Japanese, Korean, Chinese, Arabic, Hebrew, Thai and Lao. Right-to-left languages
 read right to left.
 
 Where PPSSPP has a translation PSP5 uses it. The rest of the interface is PSP5's
-own and lives in `assets/lang/psp5/<id>.ini`, 78 strings a language, as plain
+own and lives in `assets/lang/psp5/<id>.ini`, 84 strings a language, as plain
 `English = translation` lines. **Those are machine-made and unread in most of
 these languages.** A line that is wrong is one line to fix, and a missing line
 falls back to its English.
 
-The fonts carry 3,055 glyphs a face rather than the kit's 113;
+The fonts carry 3,059 glyphs a face rather than the kit's 113;
 `tools/bake-fonts.sh` builds them and `tools/make-strings.py` writes the
 translation files.
 

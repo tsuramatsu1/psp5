@@ -41,6 +41,51 @@ bool EnsureDir(const std::string &path) {
 	return true;
 }
 
+// Opens every folder a previous run left too strict and lets go of it.
+//
+// A folder is deletable by whoever can write to it, so a save folder PPSSPP made
+// at 0755 is one the console's FTP server - another process - cannot remove, and
+// its parent cannot be removed either while it is still inside. New runs no
+// longer make them (the umask is cleared in main, and the standalone patch makes
+// PPSSPP's own mkdir 0777), but a console that has already run psp5 is full of
+// them, and nothing else is ever going to go and fix them.
+//
+// Bounded rather than unbounded: this runs at every start-up, and a memory stick
+// is also where whole games live. The cap is on entries walked, not on depth, so
+// a stick with a few thousand files is repaired and one with a pathological tree
+// stops early rather than delaying the splash.
+void RepairModes(const std::string &root, int *budget) {
+	if (*budget <= 0) {
+		return;
+	}
+	DIR *dir = opendir(root.c_str());
+	if (!dir) {
+		return;
+	}
+	while (struct dirent *entry = readdir(dir)) {
+		if (--*budget <= 0) {
+			break;
+		}
+		const std::string name = entry->d_name;
+		if (name == "." || name == "..") {
+			continue;
+		}
+		const std::string path = root + "/" + name;
+		struct stat st {};
+		if (stat(path.c_str(), &st) != 0) {
+			continue;
+		}
+		const mode_t want = S_ISDIR(st.st_mode) ? 0777 : 0666;
+		if ((st.st_mode & 07777) != want) {
+			chmod(path.c_str(), want);
+		}
+		if (S_ISDIR(st.st_mode)) {
+			RepairModes(path, budget);
+		}
+	}
+	closedir(dir);
+}
+
 }  // namespace
 
 void Probe() {
@@ -121,6 +166,37 @@ bool Prepare() {
 	// there is somewhere obvious to copy a cheat file to over FTP, rather than a
 	// folder that only appears once a game has already looked for it.
 	EnsureDir(Memstick() + "/PSP/Cheats");
+
+	// Saves, save states, PSP/SYSTEM and anything else an earlier build left at
+	// 0755, which is to say unremovable from a PC. Walked from the stick rather
+	// than from /app0: the title's own shipped folders are staged 0777 already,
+	// and assets/ alone is two hundred files that would eat the budget before
+	// reaching the one tree that needs it.
+	//
+	// Once, not at every start-up. The walk costs a stat for every file on the
+	// stick, games included, and everything made from here on is made right -
+	// the umask is cleared in main and PPSSPP's mkdir is patched - so there is
+	// nothing for a second pass to find. The marker is only written if the walk
+	// got all the way through, so a stick that hit the cap is tried again.
+	const std::string marker = Config() + "/.permissions-repaired";
+	struct stat done {};
+	if (stat(marker.c_str(), &done) != 0) {
+		int budget = 20000;
+		RepairModes(Memstick(), &budget);
+		RepairModes(Config(), &budget);
+		RepairModes(Cache(), &budget);
+		if (budget > 0) {
+			if (FILE *fh = fopen(marker.c_str(), "wb")) {
+				fputs("1\n", fh);
+				fclose(fh);
+				chmod(marker.c_str(), 0666);
+			}
+			say("paths: folder permissions repaired under %s", Memstick().c_str());
+		} else {
+			say("paths: stopped repairing folder permissions at the cap; "
+			    "it will carry on at the next start-up");
+		}
+	}
 	return true;
 }
 
