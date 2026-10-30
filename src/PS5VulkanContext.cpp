@@ -16,6 +16,7 @@
 
 #include "PS5Log.h"
 #include "platform/platform.h"
+#include "ui/PS5FrameGen.h"
 
 bool PS5VulkanContext::Init(std::string *errorMessage) {
 	return InitDevice(errorMessage) && InitDraw(errorMessage);
@@ -126,6 +127,18 @@ bool PS5VulkanContext::InitDraw(std::string *errorMessage) {
 	renderManager_->SetInflightFrames(g_Config.iInflightFrames);
 
 	say("display: %dx%d", vulkan_->GetBackbufferWidth(), vulkan_->GetBackbufferHeight());
+
+	// The frame generator, once there is a device, a swapchain and a count of
+	// frames in flight to give it - it keeps a descriptor set per slot and the
+	// slot it is handed is the frame index, so the two have to agree.
+	//
+	// A failure is not one: the title runs without it, the switch stays off and
+	// the settings row says why.
+	psp5::framegen::Start(vulkan_->GetDevice(), vulkan_->GetCurrentPhysicalDevice(),
+	                      (uint32_t)vulkan_->GetBackbufferWidth(),
+	                      (uint32_t)vulkan_->GetBackbufferHeight(),
+	                      (uint32_t)g_Config.iInflightFrames,
+	                      (uint32_t)VK_FORMAT_R8G8B8A8_UNORM);
 	return true;
 }
 
@@ -137,6 +150,11 @@ void PS5VulkanContext::ReleaseDraw() {
 	delete draw_;
 	draw_ = nullptr;
 	renderManager_ = nullptr;
+	// After `delete draw_`, never before. PPSSPP joins its render thread only
+	// when the render manager is destroyed, and the generator's images are
+	// written by command buffers that thread is still submitting until then -
+	// tearing them down first is a race with a thread that is still presenting.
+	psp5::framegen::Stop();
 }
 
 void PS5VulkanContext::ShutdownDraw() {

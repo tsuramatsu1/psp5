@@ -28,6 +28,9 @@ bool g_replaceTextures = true;
 bool g_saveNewTextures = false;
 std::string g_buttonMap;
 bool g_usbPads = true;
+// Off by default, and deliberately: it is an experiment, it costs a compute
+// pass per frame, and nothing has shown it improves a game on this console.
+bool g_frameGen = false;
 bool g_loaded = false;
 
 std::string Path() {
@@ -46,6 +49,7 @@ void Save() {
 	fprintf(fh, "replacetextures=%d\n", g_replaceTextures ? 1 : 0);
 	fprintf(fh, "savenewtextures=%d\n", g_saveNewTextures ? 1 : 0);
 	fprintf(fh, "usbpads=%d\n", g_usbPads ? 1 : 0);
+	fprintf(fh, "framegen=%d\n", g_frameGen ? 1 : 0);
 	if (!g_buttonMap.empty()) {
 		fprintf(fh, "buttonmap=%s\n", g_buttonMap.c_str());
 	}
@@ -179,6 +183,19 @@ bool usbPads() {
 	return g_usbPads;
 }
 
+bool frameGen() {
+	return g_frameGen;
+}
+
+void setFrameGen(bool on) {
+	if (on == g_frameGen) {
+		return;
+	}
+	g_frameGen = on;
+	Save();
+	psp5::Trace("prefs: frame generation %s", on ? "on" : "off");
+}
+
 void setUsbPads(bool on) {
 	if (on == g_usbPads) {
 		return;
@@ -227,6 +244,9 @@ void Load() {
 		}
 		if (sscanf(line, "usbpads=%d", &value) == 1) {
 			g_usbPads = value != 0;
+		}
+		if (sscanf(line, "framegen=%d", &value) == 1) {
+			g_frameGen = value != 0;
 		}
 		char mapping[192];
 		if (sscanf(line, "buttonmap=%191s", mapping) == 1) {

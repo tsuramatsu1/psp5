@@ -52,47 +52,79 @@ own image lands.
 
 ## Not done yet
 
-### Frame generation (PS5_MihawkGen)
+### Frame generation (PS5_MihawkGen) - experimental, half built
 
-[PS5_MihawkGen](https://github.com/mihawk-99/PS5_MihawkGen) interpolates frames
-with a small neural network. Planned, not present: it was built into psp5 once,
-on 2026-10-28, and taken back out the same day because nothing could show it was
-doing anything. The notes below are what that attempt cost, so the next one does
-not pay twice.
+[PS5_MihawkGen](https://github.com/mihawk-99/PS5_MihawkGen) makes a frame
+between two the emulator drew, with a small network as Vulkan compute passes.
+`tools/setup-framegen.sh` pins v1.0.0 (network d5) and exports it into
+`.deps/framegen`, the way the UI kit is exported.
+
+**What is in the title.** The generator compiles into `psp5_ui`, its weights are
+staged at `/app0/framegen/models/network.fgw`, `src/ui/PS5FrameGen.cpp` owns the
+context and `Settings > System > Frame generation (experimental)` turns it on.
+It is off by default and nothing else behaves differently when it is on.
+
+**What is not.** No generated frame reaches the screen. The present loop is
+untouched: PPSSPP still renders once and presents once per game frame, so a
+30 fps game is still 30 fps with the switch on.
+
+**The measuring run.** With the switch on, the network does run - every frame,
+on the real pictures - and is timed; the frame it makes is written to an image
+that is never read. `FrameData::Submit` hands psp5 the finished picture inside
+the frame's own command buffer, where the backbuffer render pass has already
+left the swapchain image in `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR`; psp5 blits it
+into one of two history images, restores the layout, and records the
+generator's passes between two GPU timestamps. No extra semaphore, no extra
+submit, no extra present, and nothing on screen changes - so a mistake here
+draws wrongly rather than hanging the console.
+
+That buys the number the rest of this depends on, shown live under the settings
+row: what the passes cost on this GPU at this resolution. Under about 8 ms and
+inserting frames is worth building; near 16 ms it costs more than the frame it
+would save, and the honest answer is to stop.
+
+**Still to write: the present loop.** To show more frames the title has to
+present more often - a second acquire, a second submit and a second present per
+game frame, and the real frame held back one so the generated one lands between
+its parents. That is where the latency is traded for smoothness, and it is the
+part that can hang the console, which is why the cost is measured first.
+
+**FG_METHOD_NEURAL is the only method available here.** The others want motion
+vectors, and a PSP game has none: PPSSPP's depth buffer is the emulated
+console's and does not describe the picture on screen. The neural method reads
+the two colour frames and nothing else, which is exactly what there is.
+
+**The readout came first, deliberately.** The previous attempt (2026-10-28) was
+removed because nothing could show whether it was doing anything.
+`__DisplayGetFPS` reports the emulated vblank rate - about 60 for any game
+running at full speed, whatever it is drawing - so it answers the same way with
+a generator and without one. The counter now sits on `DisplayFireActualFlip`,
+under `fbReallyDirty`, which is PPSSPP's own decision that the picture changed
+and so the only honest definition of a real frame. Generated frames are counted
+where they are made. The settings row shows both rates and the cost per frame,
+and it is worth having before anything is generated: it says what a game is
+really drawing rather than what it is being clocked at.
 
 **The frames are not already there to be replaced.** PPSSPP presents only when
-the framebuffer really changed - `__DisplayFlip` checks `fbReallyDirty` - so a
-game running at 30 fps presents thirty times a second and sends no duplicates.
-There is nothing to substitute. A generator here has to *insert* a frame between
-two real ones and present it itself, which means it owns part of the present
-loop rather than filtering it.
+the framebuffer really changed, so a game at 30 fps presents thirty times a
+second and sends no duplicates. A generator here has to *insert* a frame and
+present it itself, which means owning part of the present loop - and holding the
+real frame back by one so the generated one can go first, which is latency
+traded for smoothness. That is the piece still to write.
 
-**The frame rate readout cannot be used as evidence.** `__DisplayGetFPS` hands
-back two different numbers: `fps` is the emulated vblank rate, which is about 60
-for any PSP game running at full speed whatever it is drawing, and the flip
-count is the game's own picture rate. "Framegen is off and it still says 60" was
-that, not a fault. Before the next attempt is worth starting, there needs to be
-a readout that separates real flips from generated presents - otherwise the
-feature cannot be judged on or off, which is why this one was removed.
+**Keep Vulkan out of the boundary.** `framegen.h` includes `<vulkan/vulkan.h>`
+and wants volk's declarations; PPSSPP keeps its own in namespace `PPSSPP_VK`,
+and a unit seeing both finds every `vkXxx` ambiguous. So the generator lives in
+`psp5_ui` (the volk target) and `ui/PS5FrameGen.h` has no Vulkan type in it at
+all - handles cross as `void *`, formats as `uint32_t`.
 
-**`CalculateFPS` was the only usable gate signal.** Everything else that looked
-like a frame rate latches or is smoothed, so it cannot say "this game is below
-the threshold *now*".
+**Shut it down after `delete draw_`, not before.** PPSSPP joins its render
+thread only when the render manager is destroyed.
 
-**Keep Vulkan out of the boundary.** The kit and psp5's UI reach Vulkan through
-volk; PPSSPP keeps its own entry points in namespace `PPSSPP_VK`. A translation
-unit that sees both finds every `vkXxx` ambiguous. The way through was to give
-the entry point scalar `void *` and `uint32_t` arguments, so the patch needed
-one `extern "C"` line, no struct and no Vulkan header on PPSSPP's side.
-
-**Shut it down after `delete draw_`, not before.** PPSSPP's render thread is
-joined only when the render manager is destroyed, so tearing the generator down
-first is a race against a thread that is still presenting.
-
-**`tools/link-title.sh` does not remove what it staged.** It creates the
-feature's folder under `dist/<TITLE_ID>/` and never deletes it, so taking the
-feature out again leaves 1.7 MB of stale weights that still ship. Check `dist/`
-after any removal.
+**`tools/link-title.sh` now unstages as well as stages.** It used to create
+`dist/<TITLE_ID>/framegen/` and never remove it, so a build made after the
+feature was taken out still shipped 1.7 MB of its weights. The `elif` that
+deletes the folder is the fix, and the mirror does the same.
 
 ## Notes
 

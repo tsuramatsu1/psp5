@@ -276,6 +276,26 @@ if [[ -d $kit/assets/audio/sfx ]]; then
 ' "$(find "$app/ui/sfx" -type f | wc -l)" "$(find "$app/ui/sfx" -mindepth 1 -maxdepth 1 -type d | wc -l)"
 fi
 
+# The frame generator's weights, which it loads from /app0/framegen/models.
+# About 1.7 MB, and the only file of PS5_FrameGen that is not compiled into the
+# title - its shaders are already SPIR-V in headers.
+#
+# The `else` is the point, and is here because its absence cost a release once:
+# this script used to create the folder and never remove it, so a build made
+# after the generator was taken out still shipped the weights of a feature that
+# was no longer there. Staging has to be able to unstage.
+framegen=${PSP5_FRAMEGEN:-$root/.deps/framegen}
+if [[ -f $framegen/framegen/models/network.fgw ]]; then
+	mkdir -p "$app/framegen/models"
+	cp -- "$framegen/framegen/models/network.fgw" "$app/framegen/models/network.fgw"
+	printf '==> staged the frame generator network (%s bytes)
+' \
+		"$(stat -c %s "$app/framegen/models/network.fgw")"
+elif [[ -d $app/framegen ]]; then
+	rm -rf -- "$app/framegen"
+	echo "==> removed the staged frame generator network; there is none in this build"
+fi
+
 # Everything a title creates must be reachable over FTP, which runs as another
 # process: folders 0777, files 0666, whatever the umask gave.
 find "$app" -type d -exec chmod 0777 {} +
@@ -304,6 +324,14 @@ if [[ -n ${PSP5_DIST_MIRROR:-} ]]; then
 		rm -rf -- "$mirror/assets"
 		cp -a -- "$app/assets" "$mirror/assets"
 		mirrored_assets=" and the assets"
+	fi
+	# The generator's weights, by the same rule as the staging above: copied
+	# when this build has them, removed from the mirror when it does not.
+	if [[ -d $app/framegen ]]; then
+		rm -rf -- "$mirror/framegen"
+		cp -a -- "$app/framegen" "$mirror/framegen"
+	elif [[ -d $mirror/framegen ]]; then
+		rm -rf -- "$mirror/framegen"
 	fi
 	mkdir -p "$mirror/sce_sys" "$mirror/sce_module"
 	cp -a -- "$app/sce_sys/." "$mirror/sce_sys/"

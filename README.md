@@ -104,6 +104,8 @@ On the home screen:
 | | |
 | --- | --- |
 | **L1 / R1** | Recent, A–Z, Favorites |
+| **L3** | search, from any tab |
+| **Circle** | clear the search |
 | **Cross** | the game's details: Play, Resume, cheats |
 | **Square** | settings for the game under the cursor |
 | **Triangle** | keep a game in Favorites |
@@ -112,6 +114,10 @@ On the home screen:
 
 *Resume* appears in place of the cheats entry when the game has a save state,
 and boots it straight into the newest one.
+
+Search narrows whichever tab is open rather than being a tab of its own, so
+searching inside Favorites searches the favorites and A–Z stays alphabetical
+while it is narrowed. The query carries across L1/R1. The top bar shows it.
 
 In the settings, **L1 / R1** turn the page — Picture, Sound, Controls, System —
 and left and right change the focused row. *Close PSP5* is at the foot of
@@ -214,6 +220,7 @@ shifts, **R2** is done, **Circle** gives up.
 | Networking | `console_curl.c`, vendored in `src/net/` from [ps5-native-app-boilerplate](https://github.com/BlackBearReloaded/ps5-native-app-boilerplate) (GPL-3.0-or-later) |
 | The unlock request | the protocol of [SwanStationPS5](https://github.com/darkxex/SwanStationPS5)'s `ps5_unlock.c` and [PS5SX2](https://github.com/Swordpdf/PS5SX2)'s `ProsperoHenJailbreak.cpp` (both GPL-3.0-or-later) |
 | USB controllers | the device routes and report decoding of PS5SX2's `ProsperoUsbPad.cpp` and `OrbisUsbPadDecode.h` (GPL-3.0-or-later), narrowed to pads |
+| Frame generation | [PS5_MihawkGen](https://github.com/mihawk-99/PS5_MihawkGen) (GPL-3.0-or-later), exported by `tools/setup-framegen.sh`. Experimental and off by default; see `docs/status.md` |
 
 PPSSPP is not vendored. `tools/build.sh` fetches the pinned revision and applies
 the two patches, so tracking upstream is a rebase of those patches rather than a

@@ -125,6 +125,17 @@ public:
 	// The game's menu loop, still encoded, or empty if it carries none.
 	const std::string &sound(std::size_t index) const { return entries_[index].sound; }
 
+	// Whether the worker has fetched this game's artwork. Until it has, the
+	// menu loop is not in memory, and sound() is empty because it has not
+	// arrived rather than because the game carries none - two different
+	// things to anyone deciding whether to start playing it.
+	//
+	// Read on the frame loop, which is also the only thing that writes
+	// resolved_ (Build, PumpCovers, DiscIdNow), so this needs no lock.
+	bool artResolved(std::size_t index) const {
+		return index < resolved_.size() && resolved_[index];
+	}
+
 	// Indices into items(), in this view's order, narrowed to the search query
 	// while there is one. The favorites view holds only the games marked as
 	// such, so it can be empty while the others are not - and so can any of

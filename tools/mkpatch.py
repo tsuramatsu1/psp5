@@ -183,6 +183,7 @@ new = r"""if(PPSSPP_PS5)
 			${PSP5_SRC_DIR}/ui/PS5Keyboard.cpp
 			${PSP5_SRC_DIR}/ui/PS5Prefs.cpp
 			${PSP5_SRC_DIR}/ui/PS5Cheats.cpp
+			${PSP5_SRC_DIR}/ui/PS5FrameGen.cpp
 			${PSP5_SRC_DIR}/ui/PS5Controls.cpp
 			${PSP5_SRC_DIR}/ui/PS5Settings.cpp
 			${PSP5_SRC_DIR}/ui/PS5Strings.cpp
@@ -193,6 +194,26 @@ new = r"""if(PPSSPP_PS5)
 		target_compile_features(psp5_ui PUBLIC cxx_std_20)
 		target_compile_definitions(psp5_ui PUBLIC PS5_UI VK_NO_PROTOTYPES)
 		target_compile_options(psp5_ui PRIVATE -include volk.h)
+
+		# PS5_FrameGen, the neural frame generator (tools/setup-framegen.sh),
+		# GPL-3.0-or-later. Built into this target and not psp5_platform for one
+		# reason: framegen.h includes <vulkan/vulkan.h> and expects volk's
+		# declarations, and a unit that sees both volk and PPSSPP's own
+		# PPSSPP_VK loader finds every vkXxx ambiguous. This is the volk side,
+		# so this is where it goes; everything PPSSPP calls crosses the boundary
+		# in src/ui/PS5FrameGen.h, which has no Vulkan type in it at all.
+		#
+		# Optional: without PSP5_FRAMEGEN the title has no generator and
+		# PS5_FrameGen* are the stubs at the foot of PS5FrameGen.cpp.
+		if(PSP5_FRAMEGEN)
+			file(GLOB psp5_framegen_sources ${PSP5_FRAMEGEN}/framegen/src/*.cpp)
+			set_source_files_properties(${psp5_framegen_sources}
+				PROPERTIES COMPILE_OPTIONS "-w")
+			target_sources(psp5_ui PRIVATE ${psp5_framegen_sources})
+			target_include_directories(psp5_ui PRIVATE
+				${PSP5_FRAMEGEN}/framegen/include ${PSP5_FRAMEGEN}/framegen/src)
+			target_compile_definitions(psp5_ui PUBLIC PSP5_FRAMEGEN)
+		endif()
 		target_link_libraries(psp5_platform psp5_ui)
 	endif()
 endif()
@@ -1028,6 +1049,92 @@ new = """#if PPSSPP_PLATFORM(PS5)
 	}
 #endif"""
 assert t.count(old) == 1, "mkdir anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# ---- sceDisplay.cpp: counting the frames that are real --------------------
+#
+# Frame generation cannot be judged by PPSSPP's frame rate readout.
+# __DisplayGetFPS reports the emulated vblank rate, which is about 60 for any
+# game running at full speed whatever it is drawing, so it answers the same way
+# whether or not a generator is running - which is why the last attempt at this
+# was removed as unmeasurable.
+#
+# What can be counted is the thing itself. DisplayFireActualFlip is called under
+# fbReallyDirty and nowhere else: it is PPSSPP's own decision that the picture
+# changed, so it is the one honest definition of "a real frame". Counting there,
+# and counting generated frames separately where they are made, is the whole of
+# the readout - and it is useful before any frame is generated, because it says
+# what the game is really drawing as opposed to what it is being clocked at.
+p = D / 'Core/HLE/sceDisplay.cpp'
+t = p.read_text()
+old = """			gpu->SetCurFramebufferDirty(fbReallyDirty);
+			if (fbReallyDirty) {
+				DisplayFireActualFlip();
+			}"""
+new = """			gpu->SetCurFramebufferDirty(fbReallyDirty);
+			if (fbReallyDirty) {
+				DisplayFireActualFlip();
+#if PPSSPP_PLATFORM(PS5)
+				PS5_FrameGenNoteReal();
+#endif
+			}"""
+assert t.count(old) == 1, "actual flip anchor"
+t = t.replace(old, new, 1)
+
+old = """void __DisplayFlip(int cyclesLate);"""
+new = """void __DisplayFlip(int cyclesLate);
+#if PPSSPP_PLATFORM(PS5)
+// One declaration rather than psp5's header: nothing of psp5 is on this
+// target's include path, and this takes nothing and returns nothing.
+extern "C" void PS5_FrameGenNoteReal(void);
+#endif"""
+assert t.count(old) == 1, "flip declaration anchor"
+t = t.replace(old, new, 1)
+write(p, t)
+
+# ---- VulkanFrameData.cpp: handing the finished picture to the generator ----
+#
+# The one place the frame is complete and still reachable. The backbuffer render
+# pass declares finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, so by the end of
+# mainCmd the swapchain image is in that layout and nothing afterwards moves it;
+# psp5 takes a copy there, inside the same command buffer, which means no extra
+# semaphore, no extra submit and no change to how the frame is presented.
+#
+# Only on FinishFrame, and only when the frame really has a swapchain image:
+# a Sync or Pending submit has none and skipSwap says the acquire failed.
+p = D / 'Common/GPU/Vulkan/VulkanFrameData.cpp'
+t = p.read_text()
+old = """	if (hasMainCommands) {
+		VkResult res = vkEndCommandBuffer(mainCmd);"""
+new = """	if (hasMainCommands) {
+#if PPSSPP_PLATFORM(PS5)
+		// Called whatever the flags say, and given them, so psp5 can report what
+		// it was offered. A capture that never ran was indistinguishable from one
+		// that was never asked for, and telling those apart cost a build.
+		{
+			const bool usable = type == FrameSubmitType::FinishFrame && !skipSwap && hasAcquired;
+			PS5_FrameGenCapture(mainCmd,
+				usable ? sharedData.swapchainImages_[curSwapchainImage].image : nullptr,
+				(unsigned int)index, (int)type, (skipSwap ? 1 : 0) | (hasAcquired ? 2 : 0));
+		}
+#endif
+		VkResult res = vkEndCommandBuffer(mainCmd);"""
+assert t.count(old) == 1, "Submit mainCmd anchor"
+t = t.replace(old, new, 1)
+
+old = """void FrameData::Submit(VulkanContext *vulkan, FrameSubmitType type, FrameDataShared &sharedData) {"""
+new = """#if PPSSPP_PLATFORM(PS5)
+// Declared rather than included: nothing of psp5 is on this target's include
+// path, and the generator's own header may not be seen here at all - it wants
+// volk's Vulkan declarations and this unit has PPSSPP's. Handles cross as
+// void *, which is what they are.
+extern "C" void PS5_FrameGenCapture(void *commandBuffer, void *swapchainImage,
+	unsigned int slot, int submitType, int flags);
+#endif
+
+void FrameData::Submit(VulkanContext *vulkan, FrameSubmitType type, FrameDataShared &sharedData) {"""
+assert t.count(old) == 1, "Submit declaration anchor"
 t = t.replace(old, new, 1)
 write(p, t)
 

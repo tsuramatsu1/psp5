@@ -49,6 +49,7 @@ enum class SettingKey {
 	mapping,
 	mappingReset,
 	usbPads,
+	frameGen,
 	hardcore,
 	replaceTextures,
 	saveNewTextures,

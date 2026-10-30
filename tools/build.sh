@@ -112,6 +112,19 @@ if [[ -z ${PSP5_NO_UI:-} ]]; then
 		{ echo "error: tools/setup-kit.sh did not export the pinned kit" >&2; exit 2; }
 	ui_args=(-DPSP5_UI_KIT="$ui_kit")
 	echo "==> UI kit: $ui_kit"
+
+	# The frame generator, which lives in the same target as the kit because
+	# both are compiled against volk. PSP5_NO_FRAMEGEN=1 builds without it, and
+	# so does a machine that cannot reach it - it is an experiment, not
+	# something the title fails to start without.
+	if [[ -z ${PSP5_NO_FRAMEGEN:-} ]]; then
+		if framegen=$("$root/tools/setup-framegen.sh"); then
+			ui_args+=(-DPSP5_FRAMEGEN="$framegen")
+			echo "==> frame generator: $framegen"
+		else
+			echo "==> no frame generator (tools/setup-framegen.sh); framegen will be unavailable"
+		fi
+	fi
 fi
 
 echo "==> configuring"

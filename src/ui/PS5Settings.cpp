@@ -13,6 +13,8 @@
 
 #include "ui/PS5Settings.h"
 
+#include "ui/PS5FrameGen.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <iterator>
@@ -71,6 +73,23 @@ std::string UsbPadHint() {
 		return Own("No USB controller found. A DualSense needs nothing here.");
 	}
 	return std::string(found) + " is connected.";
+}
+
+// What the row says under it, which depends on what there is to say. A player
+// who turns this on and sees nothing change is owed the reason, and the reason
+// is usually that the network is not beside the title.
+std::string FrameGenHint() {
+	if (!framegen::Ready() && framegen::Problem()[0] != '\0') {
+		return std::string(framegen::Problem());
+	}
+	if (!prefs::frameGen()) {
+		return Own("Makes a frame between two the game drew. Unproven: it costs GPU time and can smear.");
+	}
+	const framegen::Readout shown = framegen::Counts();
+	char text[96];
+	std::snprintf(text, sizeof(text), "%.0f drawn + %.0f made a second, %.1f ms each",
+	              shown.realPerSecond, shown.generatedPerSecond, shown.millisecondsPerFrame);
+	return text;
 }
 
 std::string Format(const char *format, int value) {
@@ -726,6 +745,16 @@ void Settings::Rebuild() {
 		items_.push_back({SettingKey::saveNewTextures, SettingCategory::system, Translate(I18NCat::DEVELOPER, "Save new textures", "Save new textures"),
 		                  prefs::saveNewTextures() ? "On" : "Off",
 		                  Own("Writes what a game draws to PSP/TEXTURES/<GAMEID>/new/, to build a pack.")});
+
+		// Named an experiment in the row itself, not only in the sentence
+		// under it: the value is the first thing read, and a player who
+		// turns this on should know what they are turning on before they
+		// wonder why a game looks strange.
+		if (framegen::BuiltIn()) {
+			items_.push_back({SettingKey::frameGen, SettingCategory::system,
+			                  Own("Frame generation (experimental)"),
+			                  prefs::frameGen() ? "On" : "Off", FrameGenHint()});
+		}
 	}
 }
 
@@ -912,6 +941,9 @@ bool Settings::Adjust(std::size_t index, int delta) {
 				return false;
 			}
 			controls::Reset();
+			break;
+		case SettingKey::frameGen:
+			prefs::setFrameGen(!prefs::frameGen());
 			break;
 		case SettingKey::usbPads:
 			prefs::setUsbPads(!prefs::usbPads());

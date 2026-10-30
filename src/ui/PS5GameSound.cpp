@@ -124,7 +124,16 @@ void GameSound::Update(hui::audio::Mixer &mixer, float dt) {
 
 	if (pending_ != playing_) {
 		rest_ += dt;
-		if (rest_ >= kRestSeconds) {
+		// The menu loop arrives with the game's artwork, which a worker
+		// thread fetches when the shelf comes near it - so the game under
+		// the cursor may not have one in memory yet. Start() sets playing_
+		// to pending_ whether or not it found anything to play, and this
+		// branch only runs while those two differ: starting a moment too
+		// early therefore lost that game's music for as long as the cursor
+		// stayed on it. Waiting for the artwork costs nothing - the shelf
+		// has asked for it already - and a game that really carries no
+		// SND0.AT3 still resolves, starts, and is silent exactly once.
+		if (rest_ >= kRestSeconds && Library().artResolved(pending_)) {
 			rest_ = 0.0f;
 			Start(pending_);
 			mixer.set_stream_gain(0, pcm_.empty() ? 0.0f : kGain, kFadeSeconds);

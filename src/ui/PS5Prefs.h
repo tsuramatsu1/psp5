@@ -100,6 +100,11 @@ void setButtonMap(const std::string &packed);
 bool usbPads();
 void setUsbPads(bool on);
 
+// Frame generation (ui/PS5FrameGen.h), which is an experiment: off unless
+// asked for, and nothing else in the title behaves differently when it is on.
+bool frameGen();
+void setFrameGen(bool on);
+
 // Reads config/psp5.txt. Called once, before the home screen is built.
 void Load();
 
